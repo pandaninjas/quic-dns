@@ -64,7 +64,7 @@ jobs:
         
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner != 'ubuntu-latest' }}
+        if: ${{ matrix.runner != 'ubuntu-latest' && matrix.target != 'aarch64-pc-windows-msvc' }}
       - name: Build (ARM64 Windows)
         run: $env:Path += ";C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin"; cargo build --release --locked --target ${{ matrix.target }}
         if: ${{ matrix.target == 'aarch64-pc-windows-msvc' }}
