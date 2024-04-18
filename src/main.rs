@@ -18,8 +18,6 @@ use h3_quinn::quinn::Endpoint;
 use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
 
-trait SizedError: Error + Sized {}
-
 struct DNSQuery {
     buf: BytesMut,
     respond_to: SocketAddr
