@@ -1,0 +1,83 @@
+# Taken from https://github.com/ryanccn/nrr/blob/main/.github/workflows/build.yml, modified to change the targets
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        target:
+          # apple for x64 and arm
+          - aarch64-apple-darwin          
+          - x86_64-apple-darwin
+          
+          # windows
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc	
+          - i686-pc-windows-msvc
+
+          # linux
+          - x86_64-unknown-linux-gnu	
+          - i686-unknown-linux-gnu	
+          - aarch64-unknown-linux-gnu	
+          - armv7-unknown-linux-gnueabihf	
+        include:
+            # apple for x64 and arm
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+
+            # windows
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc	
+            runner: windows-latest
+            
+            # linux
+          - target: aarch64-unknown-linux-gnu	
+            runner: ubuntu-latest
+          - target: armv7-unknown-linux-gnueabihf
+            runner: ubuntu-latest
+          - target: x86_64-unknown-linux-gnu	
+            runner: ubuntu-latest
+          - target: i686-unknown-linux-gnu
+            runner: ubuntu-latest
+      fail-fast: false
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-auditable
+        run: cargo install cargo-auditable
+
+      - name: Build
+        run: cargo auditable build --release --locked --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: "error"
+          name: quic-dns-${{ matrix.target }}
+          path: |
+            ./target/${{ matrix.target }}/release/quic-dns
+            ./target/${{ matrix.target }}/release/quic-dns.exe
