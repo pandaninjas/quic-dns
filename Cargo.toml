@@ -1,0 +1,16 @@
+[package]
+name = "quic-dns"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.37.0", features = ["full"] }
+h3 = "0.0.4"
+h3-quinn = "0.0.5"
+quinn = { version = "0.10.2", features = ["ring"]}
+http = "1"
+bytes = "1.6.0"
+rustls = "0.21"
+rustls-native-certs = "0.6"
