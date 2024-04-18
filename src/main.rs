@@ -18,9 +18,27 @@ use h3_quinn::quinn::Endpoint;
 use bytes::{Buf, BytesMut};
 use std::fmt::Debug;
 
+trait SizedError: Error + Sized {}
+
 struct DNSQuery {
     buf: BytesMut,
     respond_to: SocketAddr
+}
+
+struct MismatchLength {}
+
+impl Error for MismatchLength {}
+
+impl Display for MismatchLength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "content-length does not match actual bytes read")
+    }
+}
+
+impl Debug for MismatchLength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MismatchLength").finish()
+    }
 }
 
 struct NoValue {}
@@ -117,7 +135,7 @@ async fn main() -> io::Result<()> {
 
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            let result = async {
+            let result: Result<(), Box<dyn Error>> = async {
                 
                 let req = http::Request::builder()
                     .method("POST")
@@ -138,12 +156,17 @@ async fn main() -> io::Result<()> {
 
                 let length: usize = resp.headers().get("content-length").unwrap_or_err()?.to_str()?.parse()?;
                 let mut resp_buffer: [u8; 512] = [0; 512];
+                let mut read_total = 0;
                 while let Some(chunk) = stream.recv_data().await? {
-                    chunk.reader().read(&mut resp_buffer)?;
+                    let read = chunk.reader().read(&mut resp_buffer)?;
+                    read_total += read;
+                }
+                if read_total != length {
+                    return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}))
                 }
                 response_socket.send_to(&resp_buffer[0..length], message.respond_to).await?;
                 println!("done");
-                Ok::<(), Box<dyn std::error::Error>>(())
+                Ok(())
             }.await;
             if let Err(e) = result {
                 println!("oops: {}", e);
