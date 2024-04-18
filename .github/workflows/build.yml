@@ -56,10 +56,16 @@ jobs:
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
+        if: ${{ matrix.runner == "ubuntu-latest" }}
 
-      - name: Build
+      - name: Build with cross
         run: cross build --release --locked --target ${{ matrix.target }}
-
+        if: ${{ matrix.runner == "ubuntu-latest" }}
+        
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        if: ${{ matrix.runner != "ubuntu-latest" }}
+        
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
