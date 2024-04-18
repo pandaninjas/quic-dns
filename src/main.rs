@@ -1,4 +1,5 @@
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const UA: &str = formatcp!("quic-dns/{} (+https://github.com/pandaninjas/quic-dns)", VERSION);
 const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 
@@ -11,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::io;
 use std::net::{SocketAddr, SocketAddr::V4};
+use const_format::formatcp;
 use quinn::VarInt;
 use tokio::sync::mpsc;
 use tokio::net::UdpSocket;
@@ -140,8 +142,8 @@ async fn main() -> io::Result<()> {
                     .uri("https://1.1.1.1/dns-query")
                     .header("accept", "application/dns-message")
                     .header("content-type", "application/dns-message")
-                    .header("content-length", format!("{}", message.buf.len()))
-                    .header("user-agent", format!("quic-dns/{} (+https://github.com/pandaninjas/quic-dns)", VERSION))
+                    .header("content-length", message.buf.len().to_string())
+                    .header("user-agent", UA)
                     .body(())?;
     
                 let mut stream = send_request.send_request(req).await?;
