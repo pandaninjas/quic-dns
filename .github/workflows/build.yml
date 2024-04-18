@@ -53,7 +53,7 @@ jobs:
 
       - name: Install toolchains (Linux)
         run: sudo apt-get install gcc-arm-linux-gnueabihf && sudo apt-get install gcc-aarch64-linux-gnu
-        if: ${{ (matrix.runner != 'ubuntu-latest') }}
+        if: ${{ matrix.runner == 'ubuntu-latest' }}
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
