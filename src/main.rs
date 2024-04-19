@@ -85,55 +85,53 @@ fn start_quic_handler(
     response_socket: Arc<UdpSocket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        loop {
+        while let Some(message) = rx.recv().await {
+            let result: Result<(), Box<dyn Error>> = async {
+                let req = http::Request::builder()
+                    .method("POST")
+                    .uri("https://1.1.1.1/dns-query")
+                    .header("accept", "application/dns-message")
+                    .header("content-type", "application/dns-message")
+                    .header("content-length", message.buf.len().to_string())
+                    .header("user-agent", UA)
+                    .body(())?;
+
+                let mut stream = send_request.send_request(req).await?;
+
+                stream.send_data(message.buf.freeze()).await?;
+
+                stream.finish().await?;
+
+                let resp = stream.recv_response().await?;
+
+                let length: usize = resp
+                    .headers()
+                    .get("content-length")
+                    .unwrap_or_err()?
+                    .to_str()?
+                    .parse()?;
+                let mut resp_buffer: [u8; 512] = [0; 512];
+                let mut read_total = 0;
+                while let Some(chunk) = stream.recv_data().await? {
+                    let read = chunk.reader().read(&mut resp_buffer)?;
+                    read_total += read;
+                }
+                if read_total != length || length > 512 {
+                    return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}));
+                }
+
+                response_socket
+                    .send_to(&resp_buffer[0..length], message.respond_to)
+                    .await?;
+                println!("done");
+                Ok(())
+            }
+            .await;
+            if let Err(e) = result {
+                println!("oops: {}", e);
+            }
             if is_dead_rx.try_recv().is_ok() {
                 return;
-            }
-            if let Ok(message) = rx.try_recv() {
-                let result: Result<(), Box<dyn Error>> = async {
-                    let req = http::Request::builder()
-                        .method("POST")
-                        .uri("https://1.1.1.1/dns-query")
-                        .header("accept", "application/dns-message")
-                        .header("content-type", "application/dns-message")
-                        .header("content-length", message.buf.len().to_string())
-                        .header("user-agent", UA)
-                        .body(())?;
-
-                    let mut stream = send_request.send_request(req).await?;
-
-                    stream.send_data(message.buf.freeze()).await?;
-
-                    stream.finish().await?;
-
-                    let resp = stream.recv_response().await?;
-
-                    let length: usize = resp
-                        .headers()
-                        .get("content-length")
-                        .unwrap_or_err()?
-                        .to_str()?
-                        .parse()?;
-                    let mut resp_buffer: [u8; 512] = [0; 512];
-                    let mut read_total = 0;
-                    while let Some(chunk) = stream.recv_data().await? {
-                        let read = chunk.reader().read(&mut resp_buffer)?;
-                        read_total += read;
-                    }
-                    if read_total != length || length > 512 {
-                        return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}));
-                    }
-
-                    response_socket
-                        .send_to(&resp_buffer[0..length], message.respond_to)
-                        .await?;
-                    println!("done");
-                    Ok(())
-                }
-                .await;
-                if let Err(e) = result {
-                    println!("oops: {}", e);
-                }
             }
         }
     })
