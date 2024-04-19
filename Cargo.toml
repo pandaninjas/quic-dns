@@ -8,7 +8,7 @@ homepage = "https://github.com/pandaninjas/quic-dns"
 description = "DNS to DNS-over-https proxy"
 readme = "README.md"
 categories = ["network-programming"]
-keywords = ["dns", "quic", "1.1.1.1", "proxy"]
+keywords = ["dns", "quic", "quad1", "proxy"]
 
 [dependencies]
 tokio = { version = "1.37.0", features = ["full"] }
