@@ -1,28 +1,34 @@
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const UA: &str = formatcp!("quic-dns/{} (+https://github.com/pandaninjas/quic-dns)", VERSION);
+const UA: &str = formatcp!(
+    "quic-dns/{} (+https://github.com/pandaninjas/quic-dns)",
+    VERSION
+);
 const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 
+use bytes::{Buf, Bytes, BytesMut};
+use const_format::formatcp;
+use h3::client::SendRequest;
+use h3_quinn::quinn::Endpoint;
+use h3_quinn::{Connection, OpenStreams};
+use quinn::{VarInt, ZeroRttAccepted};
 use std::error::Error;
+use std::fmt::Debug;
 use std::fmt::Display;
-use std::future;
+use std::future::{self};
+use std::io;
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{SocketAddr, SocketAddr::V4};
 use std::sync::Arc;
 use std::time::Duration;
-use std::io;
-use std::net::{SocketAddr, SocketAddr::V4};
-use const_format::formatcp;
-use quinn::VarInt;
-use tokio::sync::mpsc;
 use tokio::net::UdpSocket;
-use h3_quinn::quinn::Endpoint;
-use bytes::{Buf, BytesMut};
-use std::fmt::Debug;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 struct DNSQuery {
     buf: BytesMut,
-    respond_to: SocketAddr
+    respond_to: SocketAddr,
 }
 
 struct MismatchLength {}
@@ -72,6 +78,67 @@ impl<T> UnwrapOrErr<T, NoValue> for Option<T> {
     }
 }
 
+fn start_quic_handler(
+    mut is_dead_rx: oneshot::Receiver<bool>,
+    mut rx: mpsc::Receiver<DNSQuery>,
+    mut send_request: SendRequest<OpenStreams, Bytes>,
+    response_socket: Arc<UdpSocket>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            if is_dead_rx.try_recv().is_ok() {
+                return;
+            }
+            if let Ok(message) = rx.try_recv() {
+                let result: Result<(), Box<dyn Error>> = async {
+                    let req = http::Request::builder()
+                        .method("POST")
+                        .uri("https://1.1.1.1/dns-query")
+                        .header("accept", "application/dns-message")
+                        .header("content-type", "application/dns-message")
+                        .header("content-length", message.buf.len().to_string())
+                        .header("user-agent", UA)
+                        .body(())?;
+
+                    let mut stream = send_request.send_request(req).await?;
+
+                    stream.send_data(message.buf.freeze()).await?;
+
+                    stream.finish().await?;
+
+                    let resp = stream.recv_response().await?;
+
+                    let length: usize = resp
+                        .headers()
+                        .get("content-length")
+                        .unwrap_or_err()?
+                        .to_str()?
+                        .parse()?;
+                    let mut resp_buffer: [u8; 512] = [0; 512];
+                    let mut read_total = 0;
+                    while let Some(chunk) = stream.recv_data().await? {
+                        let read = chunk.reader().read(&mut resp_buffer)?;
+                        read_total += read;
+                    }
+                    if read_total != length || length > 512 {
+                        return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}));
+                    }
+
+                    response_socket
+                        .send_to(&resp_buffer[0..length], message.respond_to)
+                        .await?;
+                    println!("done");
+                    Ok(())
+                }
+                .await;
+                if let Err(e) = result {
+                    println!("oops: {}", e);
+                }
+            }
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut roots = rustls::RootCertStore::empty();
@@ -101,80 +168,85 @@ async fn main() -> io::Result<()> {
 
     tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
 
+    let tls_config = Arc::new(tls_config);
+
     let mut transport_config = quinn::TransportConfig::default();
 
     transport_config.max_idle_timeout(Some(VarInt::from_u32(10_000).into()));
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
-    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_config));
-    client_config.transport_config(Arc::new(transport_config));
+    let mut client_config = quinn::ClientConfig::new(tls_config.clone());
+    let transport_config = Arc::new(transport_config);
+
+    client_config.transport_config(transport_config.clone());
 
     let dns_sock = Arc::new(UdpSocket::bind("127.0.0.1:53").await?);
-
-
 
     let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap();
     client_endpoint.set_default_client_config(client_config);
 
-    let quic = h3_quinn::Connection::new(client_endpoint.connect(ADDR, "1.1.1.1").unwrap().await?);
-    let (mut driver, mut send_request) = h3::client::new(quic).await.unwrap();
-    
+    let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
+
+    let quic = Connection::new(connecting.await?);
+    let (mut driver, send_request) = h3::client::new(quic).await.unwrap();
+
+    let (is_dead_tx, is_dead_rx) = oneshot::channel();
+
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
         if let Err(e) = r {
-            println!("death from driver: {}", e);
+            panic!("death from driver: {}", e);
         }
+        let _ = is_dead_tx.send(true);
         Ok::<(), Box<dyn std::error::Error + Send>>(())
     });
     println!("ready");
 
-    let (tx, mut rx) = mpsc::channel::<DNSQuery>(32);
+    let (mut tx, mut rx) = mpsc::channel::<DNSQuery>(128);
 
     let response_socket = dns_sock.clone();
 
-
-    tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            let result: Result<(), Box<dyn Error>> = async {
-                
-                let req = http::Request::builder()
-                    .method("POST")
-                    .uri("https://1.1.1.1/dns-query")
-                    .header("accept", "application/dns-message")
-                    .header("content-type", "application/dns-message")
-                    .header("content-length", message.buf.len().to_string())
-                    .header("user-agent", UA)
-                    .body(())?;
-    
-                let mut stream = send_request.send_request(req).await?;
-
-                stream.send_data(message.buf.freeze()).await?;
-
-                stream.finish().await?;
-                
-                let resp = stream.recv_response().await?;
-
-                let length: usize = resp.headers().get("content-length").unwrap_or_err()?.to_str()?.parse()?;
-                let mut resp_buffer: [u8; 512] = [0; 512];
-                let mut read_total = 0;
-                while let Some(chunk) = stream.recv_data().await? {
-                    let read = chunk.reader().read(&mut resp_buffer)?;
-                    read_total += read;
-                }
-                if read_total != length {
-                    return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}))
-                }
-                response_socket.send_to(&resp_buffer[0..length], message.respond_to).await?;
-                println!("done");
-                Ok(())
-            }.await;
-            if let Err(e) = result {
-                println!("oops: {}", e);
-            }
-        }
-    });
+    let mut quic_handler =
+        start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
 
     loop {
+        if quic_handler.is_finished() {
+            let mut client_config = quinn::ClientConfig::new(tls_config.clone());
+            client_config.transport_config(transport_config.clone());
+
+            // connection must've died, revive it
+            let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap();
+            client_endpoint.set_default_client_config(client_config);
+
+            let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
+
+            let connection: (quinn::Connection, ZeroRttAccepted) = connecting.into_0rtt().unwrap();
+
+            connection.1.await;
+
+            let quic = Connection::new(connection.0);
+
+            let (mut driver, send_request) = h3::client::new(quic).await.unwrap();
+
+            let (is_dead_tx, is_dead_rx) = oneshot::channel();
+
+            tokio::spawn(async move {
+                let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
+                if let Err(e) = r {
+                    panic!("death from driver: {}", e);
+                }
+                let _ = is_dead_tx.send(true);
+                Ok::<(), Box<dyn std::error::Error + Send>>(())
+            });
+            println!("ready");
+
+            let channel = mpsc::channel::<DNSQuery>(128);
+            tx = channel.0;
+            rx = channel.1;
+
+            quic_handler =
+                start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
+        }
         let mut buf = BytesMut::with_capacity(512);
         if let Ok((len, addr)) = dns_sock.clone().recv_buf_from(&mut buf).await {
             let channel = tx.clone();
@@ -183,8 +255,8 @@ async fn main() -> io::Result<()> {
                 println!("started processing");
                 buf.truncate(len);
                 let query = DNSQuery {
-                    buf: buf,
-                    respond_to: addr
+                    buf,
+                    respond_to: addr,
                 };
                 println!("sent");
                 let _ = channel.send(query).await;
