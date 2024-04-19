@@ -195,7 +195,7 @@ async fn main() -> io::Result<()> {
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
         if let Err(e) = r {
-            panic!("death from driver: {}", e);
+            println!("death from driver: {}", e);
         }
         let _ = is_dead_tx.send(true);
         Ok::<(), Box<dyn std::error::Error + Send>>(())
@@ -233,7 +233,7 @@ async fn main() -> io::Result<()> {
             tokio::spawn(async move {
                 let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
                 if let Err(e) = r {
-                    panic!("death from driver: {}", e);
+                    println!("death from driver: {}", e);
                 }
                 let _ = is_dead_tx.send(true);
                 Ok::<(), Box<dyn std::error::Error + Send>>(())
