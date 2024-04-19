@@ -27,8 +27,9 @@ jobs:
             # windows
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc	
-            runner: windows-latest
+          # blocked until quinn starts using ring >= 0.17
+          #- target: aarch64-pc-windows-msvc	
+          #  runner: windows-latest
             
             # linux
           - target: aarch64-unknown-linux-gnu	
@@ -51,19 +52,25 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      - name: Install toolchains (Linux)
-        run: sudo apt-get install gcc-arm-linux-gnueabihf && sudo apt-get install gcc-aarch64-linux-gnu && sudo apt-get install gcc-multilib
-        if: ${{ matrix.runner == 'ubuntu-latest' }}
-
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-auditable
-        run: cargo install cargo-auditable
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+        if: ${{ matrix.runner == 'ubuntu-latest' }}
 
+      - name: Build with cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+        if: ${{ matrix.runner == 'ubuntu-latest' }}
+        
       - name: Build
-        run: cargo auditable build --release --locked --target ${{ matrix.target }}
-
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        if: ${{ matrix.runner != 'ubuntu-latest' && matrix.target != 'aarch64-pc-windows-msvc' }}
+        
+      #- name: Build (ARM64 Windows)
+      #  run: $env:Path += ";C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin"; ${env:CC_aarch64-pc-windows-msvc} = "clang-cl"; cargo build --release --locked --target ${{ matrix.target }}
+      #  if: ${{ matrix.target == 'aarch64-pc-windows-msvc' }}
+        
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
