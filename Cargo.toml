@@ -2,8 +2,13 @@
 name = "quic-dns"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MPL-2.0 OR AGPL-3.0"
+repository = "https://github.com/pandaninjas/quic-dns"
+homepage = "https://github.com/pandaninjas/quic-dns"
+description = "DNS to DNS-over-https proxy"
+readme = "README.md"
+categories = ["network-programming"]
+keywords = ["dns", "quic", "1.1.1.1", "proxy"]
 
 [dependencies]
 tokio = { version = "1.37.0", features = ["full"] }
