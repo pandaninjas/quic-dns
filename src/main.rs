@@ -11,7 +11,7 @@ use const_format::formatcp;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
-use quinn::{VarInt, ZeroRttAccepted};
+use quinn::VarInt;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -220,11 +220,7 @@ async fn main() -> io::Result<()> {
 
             let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
 
-            let connection: (quinn::Connection, ZeroRttAccepted) = connecting.into_0rtt().unwrap();
-
-            connection.1.await;
-
-            let quic = Connection::new(connection.0);
+            let quic: Connection = Connection::new(connecting.await.unwrap());
 
             let (mut driver, send_request) = h3::client::new(quic).await.unwrap();
 
