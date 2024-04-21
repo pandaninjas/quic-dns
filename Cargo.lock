@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "quic-dns"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "const_format",

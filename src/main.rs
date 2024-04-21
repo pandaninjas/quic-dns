@@ -12,14 +12,16 @@ use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
 use quinn::VarInt;
+use tokio::time::sleep;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::future::{self};
-use std::io;
 use std::io::Read;
+use std::io::{self, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::{SocketAddr, SocketAddr::V4};
+use std::ops::Mul;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -74,6 +76,43 @@ impl<T> UnwrapOrErr<T, NoValue> for Option<T> {
             Ok(val)
         } else {
             Err(NoValue {})
+        }
+    }
+}
+
+impl<T, E> UnwrapOrErr<T, NoValue> for Result<T, E> {
+    #[inline]
+    fn unwrap_or_err(self) -> Result<T, NoValue> {
+        if let Ok(val) = self {
+            Ok(val)
+        } else {
+            Err(NoValue {})
+        }
+    }
+}
+
+trait UnwrapOrIOErr<T> {
+    fn unwrap_or_io_err(self) -> Result<T, std::io::Error>;
+}
+
+impl<T> UnwrapOrIOErr<T> for Option<T> {
+    #[inline]
+    fn unwrap_or_io_err(self) -> Result<T, std::io::Error> {
+        if let Some(val) = self {
+            Ok(val)
+        } else {
+            Err(std::io::Error::from(ErrorKind::NotFound))
+        }
+    }
+}
+
+impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
+    #[inline]
+    fn unwrap_or_io_err(self) -> Result<T, std::io::Error> {
+        if let Ok(val) = self {
+            Ok(val)
+        } else {
+            Err(std::io::Error::from(ErrorKind::NotFound))
         }
     }
 }
@@ -207,39 +246,56 @@ async fn main() -> io::Result<()> {
     let mut quic_handler =
         start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
 
+    let mut backoff = Duration::from_millis(500);
     loop {
         if quic_handler.is_finished() {
-            let mut client_config = quinn::ClientConfig::new(tls_config.clone());
-            client_config.transport_config(transport_config.clone());
-
-            // connection must've died, revive it
-            let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap();
-            client_endpoint.set_default_client_config(client_config);
-
-            let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
-
-            let quic: Connection = Connection::new(connecting.await.unwrap());
-
-            let (mut driver, send_request) = h3::client::new(quic).await.unwrap();
-
-            let (is_dead_tx, is_dead_rx) = oneshot::channel();
-
-            tokio::spawn(async move {
-                let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-                if let Err(e) = r {
-                    println!("death from driver: {}", e);
+            loop {
+                let result: Result<(), io::Error> = {
+                    let mut client_config = quinn::ClientConfig::new(tls_config.clone());
+                    client_config.transport_config(transport_config.clone());
+    
+                    // connection must've died, revive it
+                    let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
+                    client_endpoint.set_default_client_config(client_config);
+    
+                    let connecting = client_endpoint
+                        .connect(ADDR, "1.1.1.1")
+                        .unwrap_or_io_err()?;
+    
+                    let quic: Connection = Connection::new(connecting.await?);
+    
+                    let (mut driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
+    
+                    let (is_dead_tx, is_dead_rx) = oneshot::channel();
+    
+                    tokio::spawn(async move {
+                        let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
+                        if let Err(e) = r {
+                            println!("death from driver: {}", e);
+                        }
+                        let _ = is_dead_tx.send(true);
+                        Ok::<(), Box<dyn std::error::Error + Send>>(())
+                    });
+                    println!("ready");
+    
+                    let channel = mpsc::channel::<DNSQuery>(128);
+                    tx = channel.0;
+                    rx = channel.1;
+    
+                    quic_handler =
+                        start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
+                    Ok(())
+                };
+    
+                if let Err(_) = result {
+                    println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                    // back off & retry
+                    sleep(backoff).await;
+                    backoff = backoff.mul(2);
+                } else {
+                    break
                 }
-                let _ = is_dead_tx.send(true);
-                Ok::<(), Box<dyn std::error::Error + Send>>(())
-            });
-            println!("ready");
-
-            let channel = mpsc::channel::<DNSQuery>(128);
-            tx = channel.0;
-            rx = channel.1;
-
-            quic_handler =
-                start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
+            }
         }
         let mut buf = BytesMut::with_capacity(512);
         if let Ok((len, addr)) = dns_sock.clone().recv_buf_from(&mut buf).await {
