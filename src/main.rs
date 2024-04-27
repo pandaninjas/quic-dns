@@ -167,7 +167,7 @@ fn start_quic_handler(
             }
             .await;
             if let Err(e) = result {
-                println!("operation did not suceed: {}", e);
+                println!("operation did not succeed: {}", e);
             }
             if is_dead_rx.try_recv().is_ok() {
                 return;
