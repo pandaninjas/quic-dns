@@ -162,12 +162,12 @@ fn start_quic_handler(
                 response_socket
                     .send_to(&resp_buffer[0..length], message.respond_to)
                     .await?;
-                println!("done");
+                println!("finished processing for dns request");
                 Ok(())
             }
             .await;
             if let Err(e) = result {
-                println!("oops: {}", e);
+                println!("operation did not suceed: {}", e);
             }
             if is_dead_rx.try_recv().is_ok() {
                 return;
@@ -232,12 +232,11 @@ async fn main() -> io::Result<()> {
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
         if let Err(e) = r {
-            println!("death from driver: {}", e);
+            println!("driver died with error: {}", e);
         }
         let _ = is_dead_tx.send(true);
-        Ok::<(), Box<dyn std::error::Error + Send>>(())
     });
-    println!("ready");
+    println!("h3 connection to 1.1.1.1 established");
 
     let (mut tx, mut rx) = mpsc::channel::<DNSQuery>(128);
 
@@ -274,9 +273,8 @@ async fn main() -> io::Result<()> {
                             println!("death from driver: {}", e);
                         }
                         let _ = is_dead_tx.send(true);
-                        Ok::<(), Box<dyn std::error::Error + Send>>(())
                     });
-                    println!("ready");
+                    println!("h3 connection to 1.1.1.1 established");
     
                     let channel = mpsc::channel::<DNSQuery>(128);
                     tx = channel.0;
@@ -302,15 +300,14 @@ async fn main() -> io::Result<()> {
             let channel = tx.clone();
 
             tokio::spawn(async move {
-                println!("started processing");
+                println!("accepted packet in new thread");
                 buf.truncate(len);
                 let query = DNSQuery {
                     buf,
                     respond_to: addr,
                 };
-                println!("sent");
                 let _ = channel.send(query).await;
-                Ok::<_, Box<dyn std::error::Error + Send>>(())
+                println!("sent query to h3 processor");
             });
         }
     }
