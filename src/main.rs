@@ -152,7 +152,7 @@ fn start_quic_handler(
                 let mut resp_buffer: [u8; 512] = [0; 512];
                 let mut read_total = 0;
                 while let Some(chunk) = stream.recv_data().await? {
-                    let read = chunk.reader().read(&mut resp_buffer)?;
+                    let read = chunk.reader().read(&mut resp_buffer[read_total..512])?;
                     read_total += read;
                 }
                 if read_total != length || length > 512 {
