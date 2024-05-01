@@ -15,7 +15,7 @@ tokio = { version = "1.37.0", features = ["full"] }
 h3 = "0.0.4"
 h3-quinn = "0.0.5"
 quinn = { version = "0.10.2", features = ["ring"]}
-http = "1"
+http = "1.1.0"
 bytes = "1.6.0"
 rustls = "0.21"
 rustls-native-certs = "0.6"
