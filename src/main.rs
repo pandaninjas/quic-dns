@@ -5,14 +5,12 @@ const UA: &str = formatcp!(
 );
 const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
-
 use bytes::{Buf, Bytes, BytesMut};
 use const_format::formatcp;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
 use quinn::VarInt;
-use tokio::time::sleep;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -27,6 +25,7 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 struct DNSQuery {
     buf: BytesMut,
@@ -124,18 +123,23 @@ fn start_quic_handler(
     response_socket: Arc<UdpSocket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let base_http_req = http::Request::builder()
+            .method("POST")
+            .uri("https://1.1.1.1/dns-query")
+            .header("accept", "application/dns-message")
+            .header("content-type", "application/dns-message")
+            .header("user-agent", UA)
+            .body(())
+            .unwrap();
+
         while let Some(message) = rx.recv().await {
             let result: Result<(), Box<dyn Error>> = async {
-                let req = http::Request::builder()
-                    .method("POST")
-                    .uri("https://1.1.1.1/dns-query")
-                    .header("accept", "application/dns-message")
-                    .header("content-type", "application/dns-message")
-                    .header("content-length", message.buf.len().to_string())
-                    .header("user-agent", UA)
-                    .body(())?;
+                let mut request = base_http_req.clone();
+                request
+                    .headers_mut()
+                    .insert("content-length", message.buf.len().into());
 
-                let mut stream = send_request.send_request(req).await?;
+                let mut stream = send_request.send_request(request).await?;
 
                 stream.send_data(message.buf.freeze()).await?;
 
@@ -162,12 +166,12 @@ fn start_quic_handler(
                 response_socket
                     .send_to(&resp_buffer[0..length], message.respond_to)
                     .await?;
-                println!("finished processing for dns request");
+                // println!("finished processing for dns request");
                 Ok(())
             }
             .await;
             if let Err(e) = result {
-                println!("operation did not succeed: {}", e);
+                // println!("operation did not succeed: {}", e);
             }
             if is_dead_rx.try_recv().is_ok() {
                 return;
@@ -176,8 +180,20 @@ fn start_quic_handler(
     })
 }
 
-#[tokio::main]
-async fn main() -> io::Result<()> {
+fn start_quic_driver(
+    mut driver: h3::client::Connection<Connection, Bytes>,
+    is_dead_tx: oneshot::Sender<bool>,
+) {
+    tokio::spawn(async move {
+        let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
+        if let Err(e) = r {
+            // println!("driver died with error: {}", e);
+        }
+        let _ = is_dead_tx.send(true);
+    });
+}
+
+fn create_cert_store() -> rustls::RootCertStore {
     let mut roots = rustls::RootCertStore::empty();
     match rustls_native_certs::load_native_certs() {
         Ok(certs) => {
@@ -191,6 +207,12 @@ async fn main() -> io::Result<()> {
             panic!("couldn't load any default trust roots: {}", e);
         }
     };
+    return roots;
+}
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let roots = create_cert_store();
 
     let mut tls_config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
@@ -225,18 +247,12 @@ async fn main() -> io::Result<()> {
     let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
 
     let quic = Connection::new(connecting.await?);
-    let (mut driver, send_request) = h3::client::new(quic).await.unwrap();
+    let (driver, send_request) = h3::client::new(quic).await.unwrap();
 
     let (is_dead_tx, is_dead_rx) = oneshot::channel();
 
-    tokio::spawn(async move {
-        let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-        if let Err(e) = r {
-            println!("driver died with error: {}", e);
-        }
-        let _ = is_dead_tx.send(true);
-    });
-    println!("h3 connection to 1.1.1.1 established");
+    start_quic_driver(driver, is_dead_tx);
+    // println!("h3 connection to 1.1.1.1 established");
 
     let (mut tx, mut rx) = mpsc::channel::<DNSQuery>(128);
 
@@ -252,46 +268,41 @@ async fn main() -> io::Result<()> {
                 let result: Result<(), io::Error> = {
                     let mut client_config = quinn::ClientConfig::new(tls_config.clone());
                     client_config.transport_config(transport_config.clone());
-    
+
                     // connection must've died, revive it
                     let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
                     client_endpoint.set_default_client_config(client_config);
-    
+
                     let connecting = client_endpoint
                         .connect(ADDR, "1.1.1.1")
                         .unwrap_or_io_err()?;
-    
+
                     let quic: Connection = Connection::new(connecting.await?);
-    
-                    let (mut driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
-    
+
+                    let (mut driver, send_request) =
+                        h3::client::new(quic).await.unwrap_or_io_err()?;
+
                     let (is_dead_tx, is_dead_rx) = oneshot::channel();
-    
-                    tokio::spawn(async move {
-                        let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-                        if let Err(e) = r {
-                            println!("death from driver: {}", e);
-                        }
-                        let _ = is_dead_tx.send(true);
-                    });
-                    println!("h3 connection to 1.1.1.1 established");
-    
+
+                    start_quic_driver(driver, is_dead_tx);
+                    // println!("h3 connection to 1.1.1.1 established");
+
                     let channel = mpsc::channel::<DNSQuery>(128);
                     tx = channel.0;
                     rx = channel.1;
-    
+
                     quic_handler =
                         start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
                     Ok(())
                 };
-    
+
                 if let Err(_) = result {
-                    println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                    // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                     // back off & retry
                     sleep(backoff).await;
                     backoff = backoff.mul(2);
                 } else {
-                    break
+                    break;
                 }
             }
         }
@@ -300,14 +311,14 @@ async fn main() -> io::Result<()> {
             let channel = tx.clone();
 
             tokio::spawn(async move {
-                println!("accepted packet in new thread");
+                // println!("accepted packet in new thread");
                 buf.truncate(len);
                 let query = DNSQuery {
                     buf,
                     respond_to: addr,
                 };
                 let _ = channel.send(query).await;
-                println!("sent query to h3 processor");
+                // println!("sent query to h3 processor");
             });
         }
     }
