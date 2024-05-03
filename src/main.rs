@@ -28,7 +28,8 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 struct DNSQuery {
-    buf: BytesMut,
+    h3_request: http::Request<()>,
+    buf: Bytes,
     respond_to: SocketAddr,
 }
 
@@ -123,25 +124,11 @@ fn start_quic_handler(
     response_socket: Arc<UdpSocket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let base_http_req = http::Request::builder()
-            .method("POST")
-            .uri("https://1.1.1.1/dns-query")
-            .header("accept", "application/dns-message")
-            .header("content-type", "application/dns-message")
-            .header("user-agent", UA)
-            .body(())
-            .unwrap();
-
         while let Some(message) = rx.recv().await {
             let result: Result<(), Box<dyn Error>> = async {
-                let mut request = base_http_req.clone();
-                request
-                    .headers_mut()
-                    .insert("content-length", message.buf.len().into());
+                let mut stream = send_request.send_request(message.h3_request).await?;
 
-                let mut stream = send_request.send_request(request).await?;
-
-                stream.send_data(message.buf.freeze()).await?;
+                stream.send_data(message.buf).await?;
 
                 stream.finish().await?;
 
@@ -153,6 +140,7 @@ fn start_quic_handler(
                     .unwrap_or_err()?
                     .to_str()?
                     .parse()?;
+
                 let mut resp_buffer: [u8; 512] = [0; 512];
                 let mut read_total = 0;
                 while let Some(chunk) = stream.recv_data().await? {
@@ -170,7 +158,7 @@ fn start_quic_handler(
                 Ok(())
             }
             .await;
-            if let Err(e) = result {
+            if let Err(_e) = result {
                 // println!("operation did not succeed: {}", e);
             }
             if is_dead_rx.try_recv().is_ok() {
@@ -186,7 +174,7 @@ fn start_quic_driver(
 ) {
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-        if let Err(e) = r {
+        if let Err(_e) = r {
             // println!("driver died with error: {}", e);
         }
         let _ = is_dead_tx.send(true);
@@ -207,7 +195,7 @@ fn create_cert_store() -> rustls::RootCertStore {
             panic!("couldn't load any default trust roots: {}", e);
         }
     };
-    return roots;
+    roots
 }
 
 #[tokio::main]
@@ -263,6 +251,15 @@ async fn main() -> io::Result<()> {
 
     let mut backoff = Duration::from_millis(500);
     loop {
+        let base_http_req = http::Request::builder()
+            .method("POST")
+            .uri("https://1.1.1.1/dns-query")
+            .header("accept", "application/dns-message")
+            .header("content-type", "application/dns-message")
+            .header("user-agent", UA)
+            .body(())
+            .unwrap();
+
         if quic_handler.is_finished() {
             loop {
                 let result: Result<(), io::Error> = {
@@ -279,8 +276,7 @@ async fn main() -> io::Result<()> {
 
                     let quic: Connection = Connection::new(connecting.await?);
 
-                    let (mut driver, send_request) =
-                        h3::client::new(quic).await.unwrap_or_io_err()?;
+                    let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
 
                     let (is_dead_tx, is_dead_rx) = oneshot::channel();
 
@@ -311,12 +307,19 @@ async fn main() -> io::Result<()> {
             let channel = tx.clone();
 
             tokio::spawn(async move {
-                // println!("accepted packet in new thread");
+                let mut request = base_http_req.clone();
+                request
+                    .headers_mut()
+                    .insert("content-length", buf.len().into());
+
                 buf.truncate(len);
+                let buf = buf.freeze();
                 let query = DNSQuery {
-                    buf,
+                    h3_request: request,
+                    buf: buf,
                     respond_to: addr,
                 };
+
                 let _ = channel.send(query).await;
                 // println!("sent query to h3 processor");
             });
