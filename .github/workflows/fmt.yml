@@ -20,8 +20,8 @@ jobs:
         run: >
           git config user.name "Automated formatter" 
           && git config user.email "41898282+github-actions[bot]@users.noreply.github.com" 
-          && git add data.json 
-          && git commit -m "Format commit" 
+          && git add .
+          && git commit -m "format: run cargo fmt" 
           && git remote set-url origin "https://__token__:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" 
           && git push -u origin main 
           || exit 0
