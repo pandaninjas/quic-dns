@@ -213,8 +213,6 @@ async fn main() -> io::Result<()> {
     tls_config.enable_early_data = true;
     tls_config.alpn_protocols = vec!["h3".into()];
 
-    tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
-
     let tls_config = Arc::new(tls_config);
 
     let mut transport_config = quinn::TransportConfig::default();
