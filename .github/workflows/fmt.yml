@@ -1,0 +1,27 @@
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    name: Run cargo fmt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Run cargo fmt
+        run: cargo fmt
+      - name: Commit changes
+        run: >
+          git config user.name "Automated formatter" 
+          && git config user.email "41898282+github-actions[bot]@users.noreply.github.com" 
+          && git add .
+          && git commit -m "format: run cargo fmt" 
+          && git remote set-url origin "https://__token__:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" 
+          && git push -u origin main 
+          || exit 0
