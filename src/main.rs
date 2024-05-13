@@ -304,7 +304,7 @@ async fn main() {
         .header("user-agent", UA)
         .body(())
         .unwrap();
-    
+
     loop {
         if quic_handler.is_finished() {
             loop {
