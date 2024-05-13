@@ -12,7 +12,6 @@ use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
 use quinn::crypto::ClientConfig;
 use quinn::{TransportConfig, VarInt};
-use tokio::io::Join;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -25,6 +24,7 @@ use std::ops::Mul;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::Join;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -201,7 +201,11 @@ fn create_cert_store() -> rustls::RootCertStore {
     roots
 }
 
-async fn try_connect_quad1(tls_config: &Arc<rustls::ClientConfig>, transport_config: &Arc<TransportConfig>, response_socket: &Arc<UdpSocket>) -> Result<(mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> {
+async fn try_connect_quad1(
+    tls_config: &Arc<rustls::ClientConfig>,
+    transport_config: &Arc<TransportConfig>,
+    response_socket: &Arc<UdpSocket>,
+) -> Result<(mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> {
     let mut client_config = quinn::ClientConfig::new(tls_config.clone());
     client_config.transport_config(transport_config.clone());
 
@@ -223,7 +227,10 @@ async fn try_connect_quad1(tls_config: &Arc<rustls::ClientConfig>, transport_con
 
     let channel = mpsc::channel::<DNSQuery>(128);
 
-    Ok((channel.0, start_quic_handler(is_dead_rx, channel.1, send_request, response_socket.clone())))
+    Ok((
+        channel.0,
+        start_quic_handler(is_dead_rx, channel.1, send_request, response_socket.clone()),
+    ))
 }
 
 #[tokio::main]
@@ -253,8 +260,12 @@ async fn main() -> () {
 
     client_config.transport_config(transport_config.clone());
 
-    let dns_sock = Arc::new(UdpSocket::bind("127.0.0.1:53").await.expect("couldn't bind to 127.0.0.1:53"));
-    
+    let dns_sock = Arc::new(
+        UdpSocket::bind("127.0.0.1:53")
+            .await
+            .expect("couldn't bind to 127.0.0.1:53"),
+    );
+
     // println!("h3 connection to 1.1.1.1 established");
 
     let response_socket = dns_sock.clone();
@@ -264,53 +275,65 @@ async fn main() -> () {
     let mut backoff = Duration::from_millis(500);
 
     loop {
-        let result: Result<(tokio::sync::mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
+        let result: Result<
+            (
+                tokio::sync::mpsc::Sender<DNSQuery>,
+                tokio::task::JoinHandle<()>,
+            ),
+            io::Error,
+        > = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
 
         match result {
             Ok((new_tx, handle)) => {
                 tx = new_tx;
                 quic_handler = handle;
                 break;
-            },
+            }
             Err(_) => {
                 // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                 // back off & retry
                 sleep(backoff).await;
                 backoff = backoff.mul(2);
-            },
+            }
         }
     }
 
     let base_http_req = http::Request::builder()
-            .method("POST")
-            .uri("https://1.1.1.1/dns-query")
-            .header("accept", "application/dns-message")
-            .header("content-type", "application/dns-message")
-            .header("user-agent", UA)
-            .body(())
-            .unwrap();
+        .method("POST")
+        .uri("https://1.1.1.1/dns-query")
+        .header("accept", "application/dns-message")
+        .header("content-type", "application/dns-message")
+        .header("user-agent", UA)
+        .body(())
+        .unwrap();
     loop {
         if quic_handler.is_finished() {
             loop {
-                let result: Result<(tokio::sync::mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
+                let result: Result<
+                    (
+                        tokio::sync::mpsc::Sender<DNSQuery>,
+                        tokio::task::JoinHandle<()>,
+                    ),
+                    io::Error,
+                > = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
 
                 match result {
                     Ok((new_tx, handle)) => {
                         tx = new_tx;
                         quic_handler = handle;
                         break;
-                    },
+                    }
                     Err(_) => {
                         // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                         // back off & retry
                         sleep(backoff).await;
                         backoff = backoff.mul(2);
-                    },
+                    }
                 }
             }
         }
         let mut buf = BytesMut::with_capacity(512);
-        
+
         if let Ok((len, addr)) = dns_sock.clone().recv_buf_from(&mut buf).await {
             let channel = tx.clone();
             let req = base_http_req.clone();
