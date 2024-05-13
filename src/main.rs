@@ -10,7 +10,9 @@ use const_format::formatcp;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
-use quinn::VarInt;
+use quinn::crypto::ClientConfig;
+use quinn::{TransportConfig, VarInt};
+use tokio::io::Join;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -20,6 +22,7 @@ use std::io::{self, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::{SocketAddr, SocketAddr::V4};
 use std::ops::Mul;
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -118,7 +121,7 @@ impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
 }
 
 fn start_quic_handler(
-    mut is_dead_rx: oneshot::Receiver<bool>,
+    mut is_dead_rx: oneshot::Receiver<()>,
     mut rx: mpsc::Receiver<DNSQuery>,
     mut send_request: SendRequest<OpenStreams, Bytes>,
     response_socket: Arc<UdpSocket>,
@@ -170,14 +173,14 @@ fn start_quic_handler(
 
 fn start_quic_driver(
     mut driver: h3::client::Connection<Connection, Bytes>,
-    is_dead_tx: oneshot::Sender<bool>,
+    is_dead_tx: oneshot::Sender<()>,
 ) {
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
         if let Err(_e) = r {
             // println!("driver died with error: {}", e);
         }
-        let _ = is_dead_tx.send(true);
+        let _ = is_dead_tx.send(());
     });
 }
 
@@ -198,8 +201,33 @@ fn create_cert_store() -> rustls::RootCertStore {
     roots
 }
 
+async fn try_connect_quad1(tls_config: &Arc<rustls::ClientConfig>, transport_config: &Arc<TransportConfig>, response_socket: &Arc<UdpSocket>) -> Result<(mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> {
+    let mut client_config = quinn::ClientConfig::new(tls_config.clone());
+    client_config.transport_config(transport_config.clone());
+
+    // connection must've died, revive it
+    let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
+    client_endpoint.set_default_client_config(client_config);
+
+    let connecting = client_endpoint
+        .connect(ADDR, "1.1.1.1")
+        .unwrap_or_io_err()?;
+
+    let quic: Connection = Connection::new(connecting.await?);
+
+    let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
+
+    let (is_dead_tx, is_dead_rx) = oneshot::channel();
+
+    start_quic_driver(driver, is_dead_tx);
+
+    let channel = mpsc::channel::<DNSQuery>(128);
+
+    Ok((channel.0, start_quic_handler(is_dead_rx, channel.1, send_request, response_socket.clone())))
+}
+
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> () {
     let roots = create_cert_store();
 
     let mut tls_config = rustls::ClientConfig::builder()
@@ -227,31 +255,35 @@ async fn main() -> io::Result<()> {
 
     client_config.transport_config(transport_config.clone());
 
-    let dns_sock = Arc::new(UdpSocket::bind("127.0.0.1:53").await?);
-
-    let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap();
-    client_endpoint.set_default_client_config(client_config);
-
-    let connecting = client_endpoint.connect(ADDR, "1.1.1.1").unwrap();
-
-    let quic = Connection::new(connecting.await?);
-    let (driver, send_request) = h3::client::new(quic).await.unwrap();
-
-    let (is_dead_tx, is_dead_rx) = oneshot::channel();
-
-    start_quic_driver(driver, is_dead_tx);
+    let dns_sock = Arc::new(UdpSocket::bind("127.0.0.1:53").await.expect("couldn't bind to 127.0.0.1:53"));
+    
     // println!("h3 connection to 1.1.1.1 established");
-
-    let (mut tx, mut rx) = mpsc::channel::<DNSQuery>(128);
 
     let response_socket = dns_sock.clone();
 
-    let mut quic_handler =
-        start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
-
+    let mut quic_handler;
+    let mut tx;
     let mut backoff = Duration::from_millis(500);
+
     loop {
-        let base_http_req = http::Request::builder()
+        let result: Result<(tokio::sync::mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
+
+        match result {
+            Ok((new_tx, handle)) => {
+                tx = new_tx;
+                quic_handler = handle;
+                break;
+            },
+            Err(_) => {
+                // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                // back off & retry
+                sleep(backoff).await;
+                backoff = backoff.mul(2);
+            },
+        }
+    }
+
+    let base_http_req = http::Request::builder()
             .method("POST")
             .uri("https://1.1.1.1/dns-query")
             .header("accept", "application/dns-message")
@@ -259,55 +291,33 @@ async fn main() -> io::Result<()> {
             .header("user-agent", UA)
             .body(())
             .unwrap();
-
+    loop {
         if quic_handler.is_finished() {
             loop {
-                let result: Result<(), io::Error> = {
-                    let mut client_config = quinn::ClientConfig::new(tls_config.clone());
-                    client_config.transport_config(transport_config.clone());
+                let result: Result<(tokio::sync::mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
 
-                    // connection must've died, revive it
-                    let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
-                    client_endpoint.set_default_client_config(client_config);
-
-                    let connecting = client_endpoint
-                        .connect(ADDR, "1.1.1.1")
-                        .unwrap_or_io_err()?;
-
-                    let quic: Connection = Connection::new(connecting.await?);
-
-                    let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
-
-                    let (is_dead_tx, is_dead_rx) = oneshot::channel();
-
-                    start_quic_driver(driver, is_dead_tx);
-                    // println!("h3 connection to 1.1.1.1 established");
-
-                    let channel = mpsc::channel::<DNSQuery>(128);
-                    tx = channel.0;
-                    rx = channel.1;
-
-                    quic_handler =
-                        start_quic_handler(is_dead_rx, rx, send_request, response_socket.clone());
-                    Ok(())
-                };
-
-                if let Err(_) = result {
-                    // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
-                    // back off & retry
-                    sleep(backoff).await;
-                    backoff = backoff.mul(2);
-                } else {
-                    break;
+                match result {
+                    Ok((new_tx, handle)) => {
+                        tx = new_tx;
+                        quic_handler = handle;
+                        break;
+                    },
+                    Err(_) => {
+                        // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                        // back off & retry
+                        sleep(backoff).await;
+                        backoff = backoff.mul(2);
+                    },
                 }
             }
         }
         let mut buf = BytesMut::with_capacity(512);
+        
         if let Ok((len, addr)) = dns_sock.clone().recv_buf_from(&mut buf).await {
             let channel = tx.clone();
-
+            let req = base_http_req.clone();
             tokio::spawn(async move {
-                let mut request = base_http_req.clone();
+                let mut request = req;
                 request
                     .headers_mut()
                     .insert("content-length", buf.len().into());
