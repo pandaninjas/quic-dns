@@ -10,7 +10,7 @@ use const_format::formatcp;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
-use quinn::crypto::ClientConfig;
+
 use quinn::{TransportConfig, VarInt};
 use std::error::Error;
 use std::fmt::Debug;
@@ -21,10 +21,10 @@ use std::io::{self, ErrorKind};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::{SocketAddr, SocketAddr::V4};
 use std::ops::Mul;
-use std::sync::mpsc::Receiver;
+
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::Join;
+
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -234,7 +234,7 @@ async fn try_connect_quad1(
 }
 
 #[tokio::main]
-async fn main() -> () {
+async fn main() {
     let roots = create_cert_store();
 
     let mut tls_config = rustls::ClientConfig::builder()
@@ -268,8 +268,6 @@ async fn main() -> () {
 
     // println!("h3 connection to 1.1.1.1 established");
 
-    let response_socket = dns_sock.clone();
-
     let mut quic_handler;
     let mut tx;
     let mut backoff = Duration::from_millis(500);
@@ -281,7 +279,7 @@ async fn main() -> () {
                 tokio::task::JoinHandle<()>,
             ),
             io::Error,
-        > = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
+        > = try_connect_quad1(&tls_config, &transport_config, &dns_sock).await;
 
         match result {
             Ok((new_tx, handle)) => {
@@ -306,6 +304,7 @@ async fn main() -> () {
         .header("user-agent", UA)
         .body(())
         .unwrap();
+    
     loop {
         if quic_handler.is_finished() {
             loop {
@@ -315,7 +314,7 @@ async fn main() -> () {
                         tokio::task::JoinHandle<()>,
                     ),
                     io::Error,
-                > = try_connect_quad1(&tls_config, &transport_config, &response_socket).await;
+                > = try_connect_quad1(&tls_config, &transport_config, &dns_sock).await;
 
                 match result {
                     Ok((new_tx, handle)) => {
@@ -347,7 +346,7 @@ async fn main() -> () {
                 let buf = buf.freeze();
                 let query = DNSQuery {
                     h3_request: request,
-                    buf: buf,
+                    buf,
                     respond_to: addr,
                 };
 
