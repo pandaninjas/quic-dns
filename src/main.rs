@@ -120,7 +120,11 @@ impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
     }
 }
 
-async fn handle_message(message: DNSQuery, send_request: &mut SendRequest<OpenStreams, Bytes>, response_socket: &Arc<UdpSocket>) -> Result<(), Box<dyn Error>> {
+async fn handle_message(
+    message: DNSQuery,
+    send_request: &mut SendRequest<OpenStreams, Bytes>,
+    response_socket: &Arc<UdpSocket>,
+) -> Result<(), Box<dyn Error>> {
     let mut stream = send_request.send_request(message.h3_request).await?;
 
     stream.send_data(message.buf).await?;
