@@ -93,8 +93,8 @@ jobs:
       - name: Start server
         run: >
           cd $GITHUB_WORKSPACE &&
-          chmod +x quic-dns-x86_64-unknown-linux-gnu &&
-          nohup ./quic-dns-x86_64-unknown-linux-gnu 
+          chmod +x quic-dns &&
+          nohup ./quic-dns
       - name: Benchmark it
         id: benchmark
         run: >
