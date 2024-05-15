@@ -101,7 +101,7 @@ jobs:
         id: benchmark
         run: >
           echo -n "QPS=" >> $GITHUB_OUTPUT &&
-          /usr/local/bin/dnspyre --duration 10m -c 2 https://github.com/Tantalor93/dnspyre/blob/master/data/alexa | jq '.["queriesPerSecond"]' >> $GITHUB_OUTPUT
+          /usr/local/bin/dnspyre --json --duration 10m -c 2 https://github.com/Tantalor93/dnspyre/blob/master/data/alexa | jq '.["queriesPerSecond"]' >> $GITHUB_OUTPUT
       - name: Create commit comment
         uses: peter-evans/commit-comment@v3
         with:
