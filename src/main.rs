@@ -7,10 +7,12 @@ const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 use bytes::{Buf, Bytes, BytesMut};
 use const_format::formatcp;
+use fast_log::Config;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
 
+use log::{error, info};
 use quinn::{TransportConfig, VarInt};
 use std::error::Error;
 use std::fmt::Debug;
@@ -153,7 +155,7 @@ async fn handle_message(
     response_socket
         .send_to(&resp_buffer[0..length], message.respond_to)
         .await?;
-    // println!("finished processing for dns request");
+    info!("finished processing for dns request");
     Ok(())
 }
 
@@ -165,8 +167,8 @@ fn start_quic_handler(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            if let Err(_e) = handle_message(message, &mut send_request, &response_socket).await {
-                // println!("operation did not succeed: {}", e);
+            if let Err(e) = handle_message(message, &mut send_request, &response_socket).await {
+                error!("operation did not succeed: {e}");
             }
             if is_dead_rx.try_recv().is_ok() {
                 return;
@@ -181,8 +183,8 @@ fn start_quic_driver(
 ) {
     tokio::spawn(async move {
         let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-        if let Err(_e) = r {
-            // println!("driver died with error: {}", e);
+        if let Err(e) = r {
+            error!("driver died with error: {e}");
         }
         let _ = is_dead_tx.send(());
     });
@@ -239,6 +241,8 @@ async fn try_connect_quad1(
 
 #[tokio::main]
 async fn main() {
+    fast_log::init(Config::new().console().chan_len(Some(100000 /* 100K */)).level(log::LevelFilter::Info)).unwrap();
+
     let roots = create_cert_store();
 
     let mut tls_config = rustls::ClientConfig::builder()
@@ -270,8 +274,6 @@ async fn main() {
             .expect("couldn't bind to 127.0.0.1:53"),
     );
 
-    // println!("h3 connection to 1.1.1.1 established");
-
     let mut quic_handler;
     let mut tx;
     let mut backoff = Duration::from_millis(500);
@@ -292,13 +294,15 @@ async fn main() {
                 break;
             }
             Err(_) => {
-                // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                error!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                 // back off & retry
                 sleep(backoff).await;
                 backoff = backoff.mul(2);
             }
         }
     }
+
+    info!("h3 connection to 1.1.1.1 established");
 
     let base_http_req = http::Request::builder()
         .method("POST")
@@ -328,7 +332,7 @@ async fn main() {
                         break;
                     }
                     Err(_) => {
-                        // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                        error!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                         // back off & retry
                         sleep(backoff).await;
                         if backoff < Duration::from_secs(30) {
@@ -358,7 +362,7 @@ async fn main() {
                 };
 
                 let _ = channel.send(query).await;
-                // println!("sent query to h3 processor");
+                info!("sent query to h3 processor");
             });
         }
     }
