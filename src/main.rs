@@ -120,6 +120,39 @@ impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
     }
 }
 
+async fn handle_message(message: DNSQuery, send_request: &mut SendRequest<OpenStreams, Bytes>, response_socket: &Arc<UdpSocket>) -> Result<(), Box<dyn Error>> {
+    let mut stream = send_request.send_request(message.h3_request).await?;
+
+    stream.send_data(message.buf).await?;
+
+    stream.finish().await?;
+
+    let resp = stream.recv_response().await?;
+
+    let length: usize = resp
+        .headers()
+        .get("content-length")
+        .unwrap_or_err()?
+        .to_str()?
+        .parse()?;
+
+    let mut resp_buffer: [u8; 512] = [0; 512];
+    let mut read_total = 0;
+    while let Some(chunk) = stream.recv_data().await? {
+        let read = chunk.reader().read(&mut resp_buffer[read_total..512])?;
+        read_total += read;
+    }
+    if read_total != length || length > 512 {
+        return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}));
+    }
+
+    response_socket
+        .send_to(&resp_buffer[0..length], message.respond_to)
+        .await?;
+    // println!("finished processing for dns request");
+    Ok(())
+}
+
 fn start_quic_handler(
     mut is_dead_rx: oneshot::Receiver<()>,
     mut rx: mpsc::Receiver<DNSQuery>,
@@ -128,40 +161,7 @@ fn start_quic_handler(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            let result: Result<(), Box<dyn Error>> = async {
-                let mut stream = send_request.send_request(message.h3_request).await?;
-
-                stream.send_data(message.buf).await?;
-
-                stream.finish().await?;
-
-                let resp = stream.recv_response().await?;
-
-                let length: usize = resp
-                    .headers()
-                    .get("content-length")
-                    .unwrap_or_err()?
-                    .to_str()?
-                    .parse()?;
-
-                let mut resp_buffer: [u8; 512] = [0; 512];
-                let mut read_total = 0;
-                while let Some(chunk) = stream.recv_data().await? {
-                    let read = chunk.reader().read(&mut resp_buffer[read_total..512])?;
-                    read_total += read;
-                }
-                if read_total != length || length > 512 {
-                    return Err::<(), Box<dyn Error>>(Box::new(MismatchLength {}));
-                }
-
-                response_socket
-                    .send_to(&resp_buffer[0..length], message.respond_to)
-                    .await?;
-                // println!("finished processing for dns request");
-                Ok(())
-            }
-            .await;
-            if let Err(_e) = result {
+            if let Err(_e) = handle_message(message, &mut send_request, &response_socket).await {
                 // println!("operation did not succeed: {}", e);
             }
             if is_dead_rx.try_recv().is_ok() {
