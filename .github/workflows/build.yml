@@ -80,6 +80,7 @@ jobs:
             ./target/${{ matrix.target }}/release/quic-dns
             ./target/${{ matrix.target }}/release/quic-dns.exe
   benchmark:
+    needs: build
     runs-on: ubuntu-latest
     name: Benchmark with dnspyre
     steps:
