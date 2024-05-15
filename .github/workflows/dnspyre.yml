@@ -9,6 +9,7 @@ on:
 
 jobs:
   benchmark:
+    needs: build
     runs-on: ubuntu-latest
     name: Benchmark with dnspyre
     steps:
