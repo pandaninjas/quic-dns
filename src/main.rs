@@ -241,7 +241,13 @@ async fn try_connect_quad1(
 
 #[tokio::main]
 async fn main() {
-    fast_log::init(Config::new().console().chan_len(Some(100000 /* 100K */)).level(log::LevelFilter::Info)).unwrap();
+    fast_log::init(
+        Config::new()
+            .console()
+            .chan_len(Some(100000 /* 100K */))
+            .level(log::LevelFilter::Info),
+    )
+    .unwrap();
 
     let roots = create_cert_store();
 
@@ -294,7 +300,10 @@ async fn main() {
                 break;
             }
             Err(_) => {
-                error!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                error!(
+                    "failed to reconnect, backing off for {}ms",
+                    backoff.as_millis()
+                );
                 // back off & retry
                 sleep(backoff).await;
                 backoff = backoff.mul(2);
@@ -332,7 +341,10 @@ async fn main() {
                         break;
                     }
                     Err(_) => {
-                        error!("failed to reconnect, backing off for {}ms", backoff.as_millis());
+                        error!(
+                            "failed to reconnect, backing off for {}ms",
+                            backoff.as_millis()
+                        );
                         // back off & retry
                         sleep(backoff).await;
                         if backoff < Duration::from_secs(30) {
