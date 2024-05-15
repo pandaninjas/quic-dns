@@ -320,13 +320,16 @@ async fn main() {
                     Ok((new_tx, handle)) => {
                         tx = new_tx;
                         quic_handler = handle;
+                        backoff = Duration::from_millis(500);
                         break;
                     }
                     Err(_) => {
                         // println!("failed to reconnect, backing off for {}ms", backoff.as_millis());
                         // back off & retry
                         sleep(backoff).await;
-                        backoff = backoff.mul(2);
+                        if backoff < Duration::from_secs(30) {
+                            backoff = backoff.mul(2);
+                        }
                     }
                 }
             }
