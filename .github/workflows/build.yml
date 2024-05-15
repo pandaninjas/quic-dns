@@ -91,7 +91,7 @@ jobs:
         with: 
           name: quic-dns-x86_64-unknown-linux-gnu
       - name: Install dnspyre
-        run: go install github.com/tantalor93/dnspyre/v2@latest
+        run: GOBIN=/usr/local/bin/ sudo go install github.com/tantalor93/dnspyre/v2@latest
       - name: Start server
         run: >
           cd $GITHUB_WORKSPACE &&
