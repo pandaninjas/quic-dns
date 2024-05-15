@@ -79,3 +79,27 @@ jobs:
           path: |
             ./target/${{ matrix.target }}/release/quic-dns
             ./target/${{ matrix.target }}/release/quic-dns.exe
+  benchmark:
+    runs-on: ubuntu-latest
+    name: Benchmark with dnspyre
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with: 
+          name: quic-dns-x86_64-unknown-linux-gnu
+      - name: Install dnspyre
+        run: go install github.com/tantalor93/dnspyre/v2@latest
+      - name: Start server
+        run: >
+          chmod +x quic-dns-x86_64-unknown-linux-gnu &&
+          nohup ./quic-dns-x86_64-unknown-linux-gnu 
+      - name: Benchmark it
+        id: benchmark
+        run: >
+          echo -n "QPS=" >> $GITHUB_OUTPUT
+          dnspyre.exe --duration 10m -c 2 https://github.com/Tantalor93/dnspyre/blob/master/data/alexa | jq '.["queriesPerSecond"]' >> $GITHUB_OUTPUT
+      - name: Create commit comment
+        uses: peter-evans/commit-comment@v3
+        with:
+          body: |
+            dnspyre QPS: ${{ steps.benchmark.outputs.QPS }}
