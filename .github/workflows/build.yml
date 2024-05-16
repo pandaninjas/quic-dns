@@ -106,4 +106,4 @@ jobs:
         uses: peter-evans/commit-comment@v3
         with:
           body: |
-            dnspyre average response time: ${{ steps.benchmark.outputs.QPS }}
+            dnspyre average response time: ${{ steps.benchmark.outputs.QPS }}ms
