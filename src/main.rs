@@ -12,7 +12,10 @@ use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
 
+use quinn::rustls;
+
 use log::{error, info};
+use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{TransportConfig, VarInt};
 use std::error::Error;
 use std::fmt::Debug;
@@ -195,20 +198,20 @@ fn create_cert_store() -> rustls::RootCertStore {
     match rustls_native_certs::load_native_certs() {
         Ok(certs) => {
             for cert in certs {
-                if let Err(e) = roots.add(&rustls::Certificate(cert.0)) {
-                    panic!("failed to parse trust anchor: {}", e);
+                if let Err(e) = roots.add(cert) {
+                    error!("failed to parse trust anchor: {}", e);
                 }
             }
         }
         Err(e) => {
-            panic!("couldn't load any default trust roots: {}", e);
+            error!("couldn't load any default trust roots: {}", e);
         }
     };
     roots
 }
 
 async fn try_connect_quad1(
-    tls_config: &Arc<rustls::ClientConfig>,
+    tls_config: &Arc<QuicClientConfig>,
     transport_config: &Arc<TransportConfig>,
     response_socket: &Arc<UdpSocket>,
 ) -> Result<(mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> {
@@ -251,16 +254,14 @@ async fn main() {
 
     let roots = create_cert_store();
 
-    let mut tls_config = rustls::ClientConfig::builder()
-        .with_safe_default_cipher_suites()
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
+    let mut tls_config = quinn::rustls::ClientConfig::builder()
+        .with_root_certificates(Arc::new(roots))
         .with_no_client_auth();
 
     tls_config.enable_early_data = true;
     tls_config.alpn_protocols = vec!["h3".into()];
+
+    let tls_config = QuicClientConfig::try_from(tls_config).unwrap();
 
     let tls_config = Arc::new(tls_config);
 
