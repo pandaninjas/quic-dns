@@ -222,11 +222,14 @@ async fn try_connect_quad1(
     let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
     client_endpoint.set_default_client_config(client_config);
 
-    let connecting = client_endpoint
+    let quic = client_endpoint
         .connect(ADDR, "1.1.1.1")
-        .unwrap_or_io_err()?;
+        .unwrap_or_io_err()?
+        .into_0rtt()
+        .unwrap_or_io_err()?
+        .0;
 
-    let quic: Connection = Connection::new(connecting.await?);
+    let quic = h3_quinn::Connection::new(quic);
 
     let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
 
