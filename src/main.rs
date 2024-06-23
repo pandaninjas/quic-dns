@@ -231,12 +231,11 @@ async fn try_connect_quad1(
     match connection {
         Ok(parts) => {
             quic = Connection::new(parts.0);
-        },
+        }
         Err(result) => {
             quic = Connection::new(result.await?);
-        },
+        }
     }
-
 
     let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
 
