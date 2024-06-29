@@ -106,7 +106,7 @@ jobs:
           /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
       - name: Kill quic-dns and start cloudflared
         run: >
-          pkill quic-dns
+          pkill quic-dns && 
           sudo nohup cloudflared proxy-dns --port 5553 &
       - name: Benchmark cloudflared
         id: benchmark-cloudflared
