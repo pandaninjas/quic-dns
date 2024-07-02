@@ -27,3 +27,7 @@ webpki-roots = { version = "0.26.0-alpha.1" }
 [profile.release]
 codegen-units = 1
 lto = "fat"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
