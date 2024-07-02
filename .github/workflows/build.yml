@@ -87,18 +87,36 @@ jobs:
           name: quic-dns-x86_64-unknown-linux-gnu
       - name: Install dnspyre
         run: sudo env "GOBIN=/usr/local/bin/" go install github.com/tantalor93/dnspyre/v2@latest
+      - name: Install cloudflared
+        run: >
+          sudo mkdir -p --mode=0755 /usr/share/keyrings &&
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && 
+          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared jammy main' | sudo tee /etc/apt/sources.list.d/cloudflared.list &&
+          sudo apt-get update && sudo apt-get install cloudflared
+
       - name: Start server
         run: >
           cd $GITHUB_WORKSPACE &&
           chmod +x quic-dns &&
           sudo nohup ./quic-dns &
-      - name: Benchmark it
-        id: benchmark
+      - name: Benchmark quic-dns
+        id: benchmark-quic
         run: >
           echo -n "QPS=" >> $GITHUB_OUTPUT &&
-          /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://github.com/Tantalor93/dnspyre/blob/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
+          /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
+      - name: Kill quic-dns and start cloudflared
+        run: >
+          sudo pkill quic-dns;
+          sudo nohup cloudflared proxy-dns --port 5553 &
+      - name: Benchmark cloudflared
+        id: benchmark-cloudflared
+        run: >
+          echo -n "QPS=" >> $GITHUB_OUTPUT &&
+          /usr/local/bin/dnspyre -s 127.0.0.1:5553 --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
       - name: Create commit comment
         uses: peter-evans/commit-comment@v3
         with:
           body: |
-            dnspyre average response time: ${{ steps.benchmark.outputs.QPS }}ms
+            dnspyre average response time: 
+            quic-dns: ${{ steps.benchmark-quic.outputs.QPS }}ms
+            cloudflared: ${{ steps.benchmark-cloudflared.outputs.QPS}}ms
