@@ -164,29 +164,6 @@ async fn handle_message(
     Ok(())
 }
 
-fn start_quic_handler(
-    mut is_dead_rx: oneshot::Receiver<()>,
-    mut rx: mpsc::Receiver<DNSQuery>,
-    send_request: Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
-    response_socket: Arc<UdpSocket>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            let send = send_request.clone();
-            let sock = response_socket.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handle_message(message, send, &sock).await {
-                    error!("operation did not succeed: {e}");
-                }
-            });
-
-            if is_dead_rx.try_recv().is_ok() {
-                return;
-            }
-        }
-    })
-}
-
 fn start_quic_driver(
     mut driver: h3::client::Connection<Connection, Bytes>,
     is_dead_tx: oneshot::Sender<()>,
