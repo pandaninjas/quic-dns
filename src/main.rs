@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
@@ -127,11 +127,13 @@ impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
 
 async fn handle_message(
     message: DNSQuery,
-    send_request: &mut SendRequest<OpenStreams, Bytes>,
+    send_request: Arc<Mutex<&mut SendRequest<OpenStreams, Bytes>>>,
     response_socket: &Arc<UdpSocket>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut send_request = send_request.lock().await;
     let mut stream = send_request.send_request(message.h3_request).await?;
-
+    std::mem::drop(send_request);
+    
     stream.send_data(message.buf).await?;
 
     stream.finish().await?;
@@ -165,14 +167,21 @@ async fn handle_message(
 fn start_quic_handler(
     mut is_dead_rx: oneshot::Receiver<()>,
     mut rx: mpsc::Receiver<DNSQuery>,
-    mut send_request: SendRequest<OpenStreams, Bytes>,
+    send_request: Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
     response_socket: Arc<UdpSocket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            if let Err(e) = handle_message(message, &mut send_request, &response_socket).await {
-                error!("operation did not succeed: {e}");
-            }
+            let send = send_request.clone();
+            let sock = response_socket.clone();
+            tokio::spawn(
+                async move {
+                    if let Err(e) = handle_message(message, send, &sock).await {
+                        error!("operation did not succeed: {e}");
+                    }
+                }
+            );
+            
             if is_dead_rx.try_recv().is_ok() {
                 return;
             }
@@ -238,6 +247,8 @@ async fn try_connect_quad1(
     }
 
     let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
+
+    let send_request = Arc::new(Mutex::new(Box::leak(Box::new(send_request))));
 
     let (is_dead_tx, is_dead_rx) = oneshot::channel();
 
