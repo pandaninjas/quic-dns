@@ -164,29 +164,6 @@ async fn handle_message(
     Ok(())
 }
 
-fn start_quic_handler(
-    mut is_dead_rx: oneshot::Receiver<()>,
-    mut rx: mpsc::Receiver<DNSQuery>,
-    send_request: Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
-    response_socket: Arc<UdpSocket>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some(message) = rx.recv().await {
-            let send = send_request.clone();
-            let sock = response_socket.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handle_message(message, send, &sock).await {
-                    error!("operation did not succeed: {e}");
-                }
-            });
-
-            if is_dead_rx.try_recv().is_ok() {
-                return;
-            }
-        }
-    })
-}
-
 fn start_quic_driver(
     mut driver: h3::client::Connection<Connection, Bytes>,
     is_dead_tx: oneshot::Sender<()>,
@@ -220,8 +197,13 @@ fn create_cert_store() -> rustls::RootCertStore {
 async fn try_connect_quad1(
     tls_config: &Arc<QuicClientConfig>,
     transport_config: &Arc<TransportConfig>,
-    response_socket: &Arc<UdpSocket>,
-) -> Result<(mpsc::Sender<DNSQuery>, tokio::task::JoinHandle<()>), io::Error> {
+) -> Result<
+    (
+        oneshot::Receiver<()>,
+        Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
+    ),
+    io::Error,
+> {
     let mut client_config = quinn::ClientConfig::new(tls_config.clone());
     client_config.transport_config(transport_config.clone());
 
@@ -252,12 +234,7 @@ async fn try_connect_quad1(
 
     start_quic_driver(driver, is_dead_tx);
 
-    let channel = mpsc::channel::<DNSQuery>(128);
-
-    Ok((
-        channel.0,
-        start_quic_handler(is_dead_rx, channel.1, send_request, response_socket.clone()),
-    ))
+    Ok((is_dead_rx, send_request))
 }
 
 #[tokio::main]
@@ -299,23 +276,24 @@ async fn main() {
             .expect("couldn't bind to 127.0.0.1:53"),
     );
 
-    let mut quic_handler;
-    let mut tx;
     let mut backoff = Duration::from_millis(500);
+
+    let mut send_request: Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>;
+    let mut is_dead_rx: oneshot::Receiver<()>;
 
     loop {
         let result: Result<
             (
-                tokio::sync::mpsc::Sender<DNSQuery>,
-                tokio::task::JoinHandle<()>,
+                oneshot::Receiver<()>,
+                Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
             ),
             io::Error,
-        > = try_connect_quad1(&tls_config, &transport_config, &dns_sock).await;
+        > = try_connect_quad1(&tls_config, &transport_config).await;
 
         match result {
-            Ok((new_tx, handle)) => {
-                tx = new_tx;
-                quic_handler = handle;
+            Ok((new_is_dead_rx, new_send_request)) => {
+                send_request = new_send_request;
+                is_dead_rx = new_is_dead_rx;
                 break;
             }
             Err(err) => {
@@ -343,33 +321,31 @@ async fn main() {
         .unwrap();
 
     loop {
-        if quic_handler.is_finished() {
+        if is_dead_rx.try_recv().is_ok() {
             loop {
                 let result: Result<
                     (
-                        tokio::sync::mpsc::Sender<DNSQuery>,
-                        tokio::task::JoinHandle<()>,
+                        oneshot::Receiver<()>,
+                        Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
                     ),
                     io::Error,
-                > = try_connect_quad1(&tls_config, &transport_config, &dns_sock).await;
+                > = try_connect_quad1(&tls_config, &transport_config).await;
 
                 match result {
-                    Ok((new_tx, handle)) => {
-                        tx = new_tx;
-                        quic_handler = handle;
-                        backoff = Duration::from_millis(500);
+                    Ok((new_is_dead_rx, new_send_request)) => {
+                        send_request = new_send_request;
+                        is_dead_rx = new_is_dead_rx;
                         break;
                     }
-                    Err(_) => {
+                    Err(err) => {
                         error!(
-                            "failed to reconnect, backing off for {}ms",
+                            "failed to reconnect due to {}, backing off for {}ms",
+                            err,
                             backoff.as_millis()
                         );
                         // back off & retry
                         sleep(backoff).await;
-                        if backoff < Duration::from_secs(30) {
-                            backoff = backoff.mul(2);
-                        }
+                        backoff = backoff.mul(2);
                     }
                 }
             }
@@ -377,8 +353,9 @@ async fn main() {
         let mut buf = BytesMut::with_capacity(512);
 
         if let Ok((len, addr)) = dns_sock.clone().recv_buf_from(&mut buf).await {
-            let channel = tx.clone();
             let req = base_http_req.clone();
+            let sock = dns_sock.clone();
+            let send_request_copy = send_request.clone();
             tokio::spawn(async move {
                 let mut request = req;
                 request
@@ -387,14 +364,19 @@ async fn main() {
 
                 buf.truncate(len);
                 let buf = buf.freeze();
-                let query = DNSQuery {
-                    h3_request: request,
-                    buf,
-                    respond_to: addr,
-                };
-
-                let _ = channel.send(query).await;
-                info!("sent query to h3 processor");
+                if let Err(e) = handle_message(
+                    DNSQuery {
+                        h3_request: request,
+                        buf,
+                        respond_to: addr,
+                    },
+                    send_request_copy,
+                    &sock,
+                )
+                .await
+                {
+                    error!("operation did not succeed: {e}");
+                }
             });
         }
     }
