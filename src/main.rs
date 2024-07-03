@@ -133,7 +133,7 @@ async fn handle_message(
     let mut send_request = send_request.lock().await;
     let mut stream = send_request.send_request(message.h3_request).await?;
     std::mem::drop(send_request);
-    
+
     stream.send_data(message.buf).await?;
 
     stream.finish().await?;
@@ -174,14 +174,12 @@ fn start_quic_handler(
         while let Some(message) = rx.recv().await {
             let send = send_request.clone();
             let sock = response_socket.clone();
-            tokio::spawn(
-                async move {
-                    if let Err(e) = handle_message(message, send, &sock).await {
-                        error!("operation did not succeed: {e}");
-                    }
+            tokio::spawn(async move {
+                if let Err(e) = handle_message(message, send, &sock).await {
+                    error!("operation did not succeed: {e}");
                 }
-            );
-            
+            });
+
             if is_dead_rx.try_recv().is_ok() {
                 return;
             }
