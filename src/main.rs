@@ -278,7 +278,9 @@ async fn main() {
 
     let mut backoff = Duration::from_millis(500);
 
-    let mut send_request: Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>;
+    let mut send_request: Arc<
+        Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>,
+    >;
     let mut is_dead_rx: oneshot::Receiver<()>;
 
     loop {
