@@ -7,7 +7,7 @@ const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 use bytes::{Buf, Bytes, BytesMut};
 use const_format::formatcp;
-use fast_log::Config;
+use fast_log::{Config, Receiver};
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
 use h3_quinn::{Connection, OpenStreams};
@@ -217,12 +217,8 @@ async fn try_connect_quad1(
         .into_0rtt();
 
     let quic = match connection {
-        Ok(parts) => {
-            Connection::new(parts.0)
-        }
-        Err(result) => {
-            Connection::new(result.await?)
-        }
+        Ok(parts) => Connection::new(parts.0),
+        Err(result) => Connection::new(result.await?),
     };
 
     let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
@@ -234,6 +230,43 @@ async fn try_connect_quad1(
     start_quic_driver(driver, is_dead_tx);
 
     Ok((is_dead_rx, send_request))
+}
+
+async fn connect_quad1(
+    tls_config: &Arc<QuicClientConfig>,
+    transport_config: &Arc<TransportConfig>,
+) -> (
+    oneshot::Receiver<()>,
+    Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
+) {
+    let mut backoff = Duration::from_millis(500);
+    loop {
+        let result: Result<
+            (
+                oneshot::Receiver<()>,
+                Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
+            ),
+            io::Error,
+        > = try_connect_quad1(&tls_config, &transport_config).await;
+
+        match result {
+            Ok((is_dead_rx, send_request)) => {
+                return (is_dead_rx, send_request);
+            }
+            Err(err) => {
+                error!(
+                    "failed to reconnect due to {}, backing off for {}ms",
+                    err,
+                    backoff.as_millis()
+                );
+                // back off & retry
+                sleep(backoff).await;
+                if backoff < Duration::from_millis(30_000) {
+                    backoff = backoff.mul(2);
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -275,40 +308,12 @@ async fn main() {
             .expect("couldn't bind to 127.0.0.1:53"),
     );
 
-    let mut backoff = Duration::from_millis(500);
+    let connection = connect_quad1(&tls_config, &transport_config).await;
 
+    let mut is_dead_rx: oneshot::Receiver<()> = connection.0;
     let mut send_request: Arc<
         Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>,
-    >;
-    let mut is_dead_rx: oneshot::Receiver<()>;
-
-    loop {
-        let result: Result<
-            (
-                oneshot::Receiver<()>,
-                Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
-            ),
-            io::Error,
-        > = try_connect_quad1(&tls_config, &transport_config).await;
-
-        match result {
-            Ok((new_is_dead_rx, new_send_request)) => {
-                send_request = new_send_request;
-                is_dead_rx = new_is_dead_rx;
-                break;
-            }
-            Err(err) => {
-                error!(
-                    "failed to reconnect due to {}, backing off for {}ms",
-                    err,
-                    backoff.as_millis()
-                );
-                // back off & retry
-                sleep(backoff).await;
-                backoff = backoff.mul(2);
-            }
-        }
-    }
+    > = connection.1;
 
     info!("h3 connection to 1.1.1.1 established");
 
@@ -323,33 +328,9 @@ async fn main() {
 
     loop {
         if is_dead_rx.try_recv().is_ok() {
-            loop {
-                let result: Result<
-                    (
-                        oneshot::Receiver<()>,
-                        Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
-                    ),
-                    io::Error,
-                > = try_connect_quad1(&tls_config, &transport_config).await;
-
-                match result {
-                    Ok((new_is_dead_rx, new_send_request)) => {
-                        send_request = new_send_request;
-                        is_dead_rx = new_is_dead_rx;
-                        break;
-                    }
-                    Err(err) => {
-                        error!(
-                            "failed to reconnect due to {}, backing off for {}ms",
-                            err,
-                            backoff.as_millis()
-                        );
-                        // back off & retry
-                        sleep(backoff).await;
-                        backoff = backoff.mul(2);
-                    }
-                }
-            }
+            let connection = connect_quad1(&tls_config, &transport_config).await;
+            is_dead_rx = connection.0;
+            send_request = connection.1;
         }
         let mut buf = BytesMut::with_capacity(512);
 
