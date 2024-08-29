@@ -23,7 +23,9 @@ const_format = "0.2.32"
 log = "0.4.21"
 fast_log = "1.6.16"
 webpki-roots = { version = "0.26.0-alpha.1" }
-tikv-jemallocator = "0.5"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
 
 [profile.release]
 codegen-units = 1
