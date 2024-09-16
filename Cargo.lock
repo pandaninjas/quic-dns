@@ -206,9 +206,9 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "fast_log"
-version = "1.7.3"
+version = "1.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fb4ef9b3db48f702dfa55a4d28e7c40280a81f4a2ace3e2d82577356fcaedba"
+checksum = "fa29f30d0a2ffaf0b1ff7f8a62b45755cb96882df195101c6cdbf880d1d1407a"
 dependencies = [
  "crossbeam",
  "crossbeam-channel",
@@ -216,7 +216,6 @@ dependencies = [
  "dark-std",
  "fastdate",
  "log",
- "once_cell",
  "parking_lot",
 ]
 
