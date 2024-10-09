@@ -54,10 +54,14 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Setup NASM
+        run: winget install NASM.NASM
+        if: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
+
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
         if: ${{ matrix.runner == 'ubuntu-latest' }}
-
+      
       - name: Build with cross
         run: cross build --release --locked --target ${{ matrix.target }}
         if: ${{ matrix.runner == 'ubuntu-latest' }}
