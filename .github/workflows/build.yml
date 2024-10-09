@@ -59,7 +59,7 @@ jobs:
         if: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
 
       - name: Install deps
-        run: sudo apt install binutils-arm-linux-gnueabihf gcc-multilib
+        run: sudo apt install binutils-arm-linux-gnueabihf arm-linux-gnueabihf-gcc gcc-multilib
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
 
       - name: Install cross
