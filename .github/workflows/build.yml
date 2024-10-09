@@ -58,17 +58,21 @@ jobs:
         run: choco install nasm
         if: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
 
+      - name: Install gcc for target
+        run: sudo apt install binutils-arm-linux-gnueabihf
+        if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
+
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
       
       - name: Build with cross
         run: cross build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
         
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner != 'ubuntu-latest' || matrix.target == 'x86_64-unknown-linux-gnu' }}
+        if: ${{ matrix.runner != 'ubuntu-latest' || matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf' }}
         
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
