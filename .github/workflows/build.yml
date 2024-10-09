@@ -107,12 +107,13 @@ jobs:
       - name: Kill quic-dns and start cloudflared
         run: >
           sudo pkill quic-dns;
-          sudo nohup cloudflared proxy-dns --port 5553 &
+          sleep 1;
+          sudo nohup cloudflared proxy-dns &
       - name: Benchmark cloudflared
         id: benchmark-cloudflared
         run: >
           echo -n "QPS=" >> $GITHUB_OUTPUT &&
-          /usr/local/bin/dnspyre -s 127.0.0.1:5553 --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
+          /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
       - name: Create commit comment
         uses: peter-evans/commit-comment@v3
         with:
