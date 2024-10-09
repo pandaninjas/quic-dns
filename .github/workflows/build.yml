@@ -55,7 +55,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Setup NASM
-        run: winget install NASM.NASM
+        run: choco install nasm
         if: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
 
       - name: Install cross
