@@ -120,6 +120,7 @@ jobs:
           REPORT="${REPORT//'%'/'%25'}"
           REPORT="${REPORT//$'\n'/'%0A'}"
           REPORT="${REPORT//$'\r'/'%0D'}"
+          echo $REPORT
           echo $REPORT >> $GITHUB_OUTPUT
 
       - name: Kill quic-dns and start cloudflared
@@ -141,9 +142,11 @@ jobs:
         with:
           body: |
             dnspyre report: 
-            quic-dns: ```
-            ${{ steps.benchmark-quic.outputs.REPORT}}
+            quic-dns: 
             ```
-            cloudflared: ```
-            ${{ steps.benchmark-cloudflared.outputs.REPORT}}
+            ${{ steps.benchmark-quic.outputs.REPORT }}
+            ```
+            cloudflared: 
+            ```
+            ${{ steps.benchmark-cloudflared.outputs.REPORT }}
             ```
