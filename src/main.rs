@@ -17,6 +17,7 @@ use quinn::rustls;
 use log::{error, info};
 use quinn::crypto::rustls::QuicClientConfig;
 use quinn::{TransportConfig, VarInt};
+use rustls::crypto::aws_lc_rs;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -279,6 +280,9 @@ async fn main() {
     )
     .unwrap();
 
+    aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Couldn't install aws-lc-rs crypto provider");
     let roots = create_cert_store();
 
     let mut tls_config = quinn::rustls::ClientConfig::builder()
