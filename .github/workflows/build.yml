@@ -64,6 +64,12 @@ jobs:
           echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
 
+      - name: Setup 32-bit cross compiling
+        run: >
+          sudo apt install binutils-i686-linux-gnu gcc-i686-linux-gnu &&
+          echo "CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/i686-linux-gnu-gcc" >> $GITHUB_ENV
+        if: ${{ matrix.target == 'i686-unknown-linux-gnu' }}
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
         
