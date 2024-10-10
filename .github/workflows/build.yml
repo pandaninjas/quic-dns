@@ -64,17 +64,8 @@ jobs:
           echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
-      
-      - name: Build with cross
-        run: cross build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
-        
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner != 'ubuntu-latest' || matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf' }}
         
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
