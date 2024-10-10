@@ -64,17 +64,20 @@ jobs:
           echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
-      
-      - name: Build with cross
-        run: cross build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu' && matrix.target != 'armv7-unknown-linux-gnueabihf' }}
-        
+      - name: Setup 32-bit cross compiling
+        run: >
+          sudo apt install binutils-i686-linux-gnu gcc-i686-linux-gnu &&
+          echo "CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/i686-linux-gnu-gcc" >> $GITHUB_ENV
+        if: ${{ matrix.target == 'i686-unknown-linux-gnu' }}
+
+      - name: Setup aarch64 cross compiling
+        run: >
+          sudo apt install binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu &&
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
-        if: ${{ matrix.runner != 'ubuntu-latest' || matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf' }}
         
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
