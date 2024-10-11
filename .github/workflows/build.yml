@@ -116,11 +116,10 @@ jobs:
         id: benchmark-quic
         run: >
           echo -n "REPORT=" >> $GITHUB_OUTPUT &&
-          REPORT=$(/usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa)
-          REPORT="${REPORT//'%'/'%25'}"
-          REPORT="${REPORT//$'\n'/'%0A'}"
-          REPORT="${REPORT//$'\r'/'%0D'}"
-          echo $REPORT
+          REPORT=$(/usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa) &&
+          REPORT="${REPORT//'%'/'%25'}" &&
+          REPORT="${REPORT//$'\n'/'%0A'}" &&
+          REPORT="${REPORT//$'\r'/'%0D'}" &&
           echo $REPORT >> $GITHUB_OUTPUT
 
       - name: Kill quic-dns and start cloudflared
@@ -132,10 +131,10 @@ jobs:
         id: benchmark-cloudflared
         run: >
           echo -n "REPORT=" >> $GITHUB_OUTPUT &&
-          REPORT=$(/usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa)
-          REPORT="${REPORT//'%'/'%25'}"
-          REPORT="${REPORT//$'\n'/'%0A'}"
-          REPORT="${REPORT//$'\r'/'%0D'}"
+          REPORT=$(/usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa) &&
+          REPORT="${REPORT//'%'/'%25'}" &&
+          REPORT="${REPORT//$'\n'/'%0A'}" &&
+          REPORT="${REPORT//$'\r'/'%0D'}" &&
           echo $REPORT >> $GITHUB_OUTPUT
       - name: Create commit comment
         uses: peter-evans/commit-comment@v3
