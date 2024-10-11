@@ -115,8 +115,10 @@ jobs:
       - name: Benchmark quic-dns
         id: benchmark-quic
         run: >
-          echo -n "QPS=" >> $GITHUB_OUTPUT &&
-          /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
+          echo "REPORT<<EOF" >> $GITHUB_OUTPUT &&
+          /usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa >> $GITHUB_OUTPUT &&
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Kill quic-dns and start cloudflared
         run: >
           sudo pkill quic-dns;
@@ -125,12 +127,19 @@ jobs:
       - name: Benchmark cloudflared
         id: benchmark-cloudflared
         run: >
-          echo -n "QPS=" >> $GITHUB_OUTPUT &&
-          /usr/local/bin/dnspyre --probability 0.33 --json --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa | jq '.["latencyStats"]["meanMs"]' >> $GITHUB_OUTPUT
+          echo "REPORT<<EOF" >> $GITHUB_OUTPUT &&
+          /usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa >> $GITHUB_OUTPUT &&
+          echo "EOF" >> $GITHUB_OUTPUT
       - name: Create commit comment
         uses: peter-evans/commit-comment@v3
         with:
           body: |
-            dnspyre average response time: 
-            quic-dns: ${{ steps.benchmark-quic.outputs.QPS }}ms
-            cloudflared: ${{ steps.benchmark-cloudflared.outputs.QPS}}ms
+            dnspyre report: 
+            quic-dns: 
+            ```
+            ${{ steps.benchmark-quic.outputs.REPORT }}
+            ```
+            cloudflared: 
+            ```
+            ${{ steps.benchmark-cloudflared.outputs.REPORT }}
+            ```
