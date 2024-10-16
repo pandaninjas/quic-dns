@@ -5,6 +5,11 @@ const UA: &str = formatcp!(
 );
 const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use bytes::{Buf, Bytes, BytesMut};
 use const_format::formatcp;
 use fast_log::{Config, Receiver};
