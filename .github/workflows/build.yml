@@ -61,6 +61,7 @@ jobs:
       - name: Setup armv7 cross compiling
         run: >
           sudo apt install binutils-arm-linux-gnueabihf gcc-arm-linux-gnueabihf &&
+          cargo install --force --locked bindgen-cli &&
           echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=/usr/bin/arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
         if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
 
