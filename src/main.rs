@@ -180,18 +180,18 @@ fn start_quic_driver(
 
 fn create_cert_store() -> rustls::RootCertStore {
     let mut roots = rustls::RootCertStore::empty();
-    match rustls_native_certs::load_native_certs() {
-        Ok(certs) => {
-            for cert in certs {
-                if let Err(e) = roots.add(cert) {
-                    error!("failed to parse trust anchor: {}", e);
-                }
-            }
+    let certs = rustls_native_certs::load_native_certs();
+    for cert in certs.certs {
+        if let Err(e) = roots.add(cert) {
+            error!("failed to parse trust anchor: {}", e);
         }
-        Err(e) => {
-            error!("couldn't load any default trust roots: {}", e);
-        }
-    };
+    }
+    for err in certs.errors {
+        error!("couldn't load a default trust root: {}", err);
+    }
+    if roots.is_empty() {
+        panic!("no root certs");
+    }
     roots
 }
 
