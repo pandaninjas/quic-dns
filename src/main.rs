@@ -7,10 +7,10 @@ const ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(1, 1, 1, 1), 443));
 const FROM_ADDR: SocketAddr = V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0));
 use bytes::{Buf, Bytes, BytesMut};
 use const_format::formatcp;
-use fast_log::{Config, Receiver};
+use fast_log::Config;
 use h3::client::SendRequest;
 use h3_quinn::quinn::Endpoint;
-use h3_quinn::{Connection, OpenStreams};
+use h3_quinn::Connection;
 
 use quinn::rustls;
 
@@ -23,7 +23,7 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::future::{self};
 use std::io::Read;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::{SocketAddr, SocketAddr::V4};
 use std::ops::Mul;
@@ -32,8 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::task::JoinHandle;
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::sleep;
 
 struct DNSQuery {
@@ -58,7 +57,7 @@ impl Debug for MismatchLength {
     }
 }
 
-struct NoValue {}
+struct NoValue;
 
 impl Error for NoValue {}
 
@@ -74,61 +73,11 @@ impl Debug for NoValue {
     }
 }
 
-trait UnwrapOrErr<T, E> {
-    fn unwrap_or_err(self) -> Result<T, E>;
-}
-
-impl<T> UnwrapOrErr<T, NoValue> for Option<T> {
-    #[inline]
-    fn unwrap_or_err(self) -> Result<T, NoValue> {
-        if let Some(val) = self {
-            Ok(val)
-        } else {
-            Err(NoValue {})
-        }
-    }
-}
-
-impl<T, E> UnwrapOrErr<T, NoValue> for Result<T, E> {
-    #[inline]
-    fn unwrap_or_err(self) -> Result<T, NoValue> {
-        if let Ok(val) = self {
-            Ok(val)
-        } else {
-            Err(NoValue {})
-        }
-    }
-}
-
-trait UnwrapOrIOErr<T> {
-    fn unwrap_or_io_err(self) -> Result<T, std::io::Error>;
-}
-
-impl<T> UnwrapOrIOErr<T> for Option<T> {
-    #[inline]
-    fn unwrap_or_io_err(self) -> Result<T, std::io::Error> {
-        if let Some(val) = self {
-            Ok(val)
-        } else {
-            Err(std::io::Error::from(ErrorKind::NotFound))
-        }
-    }
-}
-
-impl<T, E> UnwrapOrIOErr<T> for Result<T, E> {
-    #[inline]
-    fn unwrap_or_io_err(self) -> Result<T, std::io::Error> {
-        if let Ok(val) = self {
-            Ok(val)
-        } else {
-            Err(std::io::Error::from(ErrorKind::NotFound))
-        }
-    }
-}
+type SendRequestLock = Arc<Mutex<SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>;
 
 async fn handle_message(
     message: DNSQuery,
-    send_request: Arc<Mutex<&mut SendRequest<OpenStreams, Bytes>>>,
+    send_request: SendRequestLock,
     response_socket: &Arc<UdpSocket>,
 ) -> Result<(), Box<dyn Error>> {
     let mut send_request = send_request.lock().await;
@@ -144,7 +93,7 @@ async fn handle_message(
     let length: usize = resp
         .headers()
         .get("content-length")
-        .unwrap_or_err()?
+        .ok_or(NoValue)?
         .to_str()?
         .parse()?;
 
@@ -201,7 +150,7 @@ async fn try_connect_quad1(
 ) -> Result<
     (
         oneshot::Receiver<()>,
-        Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
+        SendRequestLock,
     ),
     io::Error,
 > {
@@ -209,12 +158,12 @@ async fn try_connect_quad1(
     client_config.transport_config(transport_config.clone());
 
     // connection must've died, revive it
-    let mut client_endpoint = Endpoint::client(FROM_ADDR).unwrap_or_io_err()?;
+    let mut client_endpoint = Endpoint::client(FROM_ADDR)?;
     client_endpoint.set_default_client_config(client_config);
 
     let connection = client_endpoint
         .connect(ADDR, "1.1.1.1")
-        .unwrap_or_io_err()?
+        .map_err(io::Error::other)?
         .into_0rtt();
 
     let quic = match connection {
@@ -222,9 +171,11 @@ async fn try_connect_quad1(
         Err(result) => Connection::new(result.await?),
     };
 
-    let (driver, send_request) = h3::client::new(quic).await.unwrap_or_io_err()?;
+    let (driver, send_request) = h3::client::new(quic)
+        .await
+        .map_err(io::Error::other)?;
 
-    let send_request = Arc::new(Mutex::new(Box::leak(Box::new(send_request))));
+    let send_request = Arc::new(Mutex::new(send_request));
 
     let (is_dead_tx, is_dead_rx) = oneshot::channel();
 
@@ -238,17 +189,17 @@ async fn connect_quad1(
     transport_config: &Arc<TransportConfig>,
 ) -> (
     oneshot::Receiver<()>,
-    Arc<Mutex<&'static mut SendRequest<OpenStreams, Bytes>>>,
+    SendRequestLock,
 ) {
     let mut backoff = Duration::from_millis(500);
     loop {
         let result: Result<
             (
                 oneshot::Receiver<()>,
-                Arc<Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>>,
+                SendRequestLock,
             ),
             io::Error,
-        > = try_connect_quad1(&tls_config, &transport_config).await;
+        > = try_connect_quad1(tls_config, transport_config).await;
 
         match result {
             Ok((is_dead_rx, send_request)) => {
@@ -315,9 +266,7 @@ async fn main() {
     let connection = connect_quad1(&tls_config, &transport_config).await;
 
     let mut is_dead_rx: oneshot::Receiver<()> = connection.0;
-    let mut send_request: Arc<
-        Mutex<&'static mut SendRequest<h3_quinn::OpenStreams, bytes::Bytes>>,
-    > = connection.1;
+    let mut send_request: SendRequestLock = connection.1;
 
     info!("h3 connection to 1.1.1.1 established");
 
