@@ -124,8 +124,8 @@ jobs:
         run: >
           sudo pkill quic-dns;
           sleep 1;
-          cd $GITHUB_WORKSPACE/linux-x86_64
-          sudo nohup  ./dnscrypt-proxy&
+          cd $GITHUB_WORKSPACE/linux-x86_64 &&
+          sudo nohup  ./dnscrypt-proxy &
       - name: Benchmark dnscrypt
         id: benchmark-dnscrypt
         run: >
