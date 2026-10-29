@@ -105,7 +105,7 @@ jobs:
           wget https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.19/dnscrypt-proxy-linux_x86_64-2.1.19.tar.gz &&
           tar -zxf dnscrypt-proxy-linux_x86_64-2.1.19.tar.gz &&
           cd linux-x86_64 &&
-          echo "server_names = ['cloudflare', 'cloudflare-ipv6']" > dnscrypt-proxy.toml
+          echo "server_names = ['cloudflare', 'cloudflare-ipv6']" >> dnscrypt-proxy.toml
       - name: Install dnspyre
         run: sudo env "GOBIN=/usr/local/bin/" go install github.com/tantalor93/dnspyre/v2@latest
       - name: Start server
