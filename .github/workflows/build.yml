@@ -99,15 +99,15 @@ jobs:
         uses: actions/download-artifact@v8
         with: 
           name: quic-dns-x86_64-unknown-linux-gnu
+      - name: Install dnscrypt
+        run: >
+          cd $GITHUB_WORKSPACE &&
+          wget https://github.com/DNSCrypt/dnscrypt-proxy/releases/download/2.1.19/dnscrypt-proxy-linux_x86_64-2.1.19.tar.gz &&
+          tar -zxf dnscrypt-proxy-linux_x86_64-2.1.19.tar.gz &&
+          cd linux-x86_64 &&
+          echo "server_names = ['cloudflare', 'cloudflare-ipv6']" >> dnscrypt-proxy.toml
       - name: Install dnspyre
         run: sudo env "GOBIN=/usr/local/bin/" go install github.com/tantalor93/dnspyre/v2@latest
-      - name: Install cloudflared
-        run: >
-          sudo mkdir -p --mode=0755 /usr/share/keyrings &&
-          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && 
-          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared jammy main' | sudo tee /etc/apt/sources.list.d/cloudflared.list &&
-          sudo apt-get update && sudo apt-get install cloudflared
-
       - name: Start server
         run: >
           cd $GITHUB_WORKSPACE &&
@@ -120,13 +120,14 @@ jobs:
           /usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa >> $GITHUB_OUTPUT &&
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Kill quic-dns and start cloudflared
+      - name: Kill quic-dns and start dnscrypt
         run: >
           sudo pkill quic-dns;
           sleep 1;
-          sudo nohup cloudflared proxy-dns &
-      - name: Benchmark cloudflared
-        id: benchmark-cloudflared
+          cd $GITHUB_WORKSPACE/linux-x86_64 &&
+          sudo nohup  ./dnscrypt-proxy &
+      - name: Benchmark dnscrypt
+        id: benchmark-dnscrypt
         run: >
           echo "REPORT<<EOF" >> $GITHUB_OUTPUT &&
           /usr/local/bin/dnspyre --probability 0.33 --no-color --no-distribution --duration 10m -c 2 https://raw.githubusercontent.com/Tantalor93/dnspyre/master/data/alexa >> $GITHUB_OUTPUT &&
@@ -142,5 +143,5 @@ jobs:
             ```
             cloudflared: 
             ```
-            ${{ steps.benchmark-cloudflared.outputs.REPORT }}
+            ${{ steps.benchmark-dnscrypt.outputs.REPORT }}
             ```
