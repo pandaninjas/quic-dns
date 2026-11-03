@@ -22,7 +22,7 @@ rustls-native-certs = "0.8.1"
 const_format = "0.2.32"
 log = "0.4.21"
 fast_log = "1.6.16"
-webpki-roots = { version = "0.26.0-alpha.1" }
+webpki-roots = { version = "1.0.0" }
 
 [profile.release]
 codegen-units = 1
