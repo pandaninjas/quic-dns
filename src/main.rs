@@ -119,10 +119,8 @@ fn start_quic_driver(
     is_dead_tx: oneshot::Sender<()>,
 ) {
     tokio::spawn(async move {
-        let r = future::poll_fn(|cx| driver.poll_close(cx)).await;
-        if let Err(e) = r {
-            error!("driver died with error: {e}");
-        }
+        let e = future::poll_fn(|cx| driver.poll_close(cx)).await;
+        error!("driver died with error: {e}");
         let _ = is_dead_tx.send(());
     });
 }
