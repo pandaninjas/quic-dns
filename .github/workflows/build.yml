@@ -20,9 +20,9 @@ jobs:
         include:
             # apple for x64 and arm
           - target: aarch64-apple-darwin
-            runner: macos-14
-          - target: x86_64-apple-darwin
             runner: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
 
             # windows
           - target: x86_64-pc-windows-msvc
