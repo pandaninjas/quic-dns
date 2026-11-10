@@ -22,8 +22,8 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::future::{self};
-use std::io::Read;
 use std::io;
+use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::net::{SocketAddr, SocketAddr::V4};
 use std::ops::Mul;
@@ -147,13 +147,7 @@ fn create_cert_store() -> rustls::RootCertStore {
 async fn try_connect_quad1(
     tls_config: &Arc<QuicClientConfig>,
     transport_config: &Arc<TransportConfig>,
-) -> Result<
-    (
-        oneshot::Receiver<()>,
-        SendRequestLock,
-    ),
-    io::Error,
-> {
+) -> Result<(oneshot::Receiver<()>, SendRequestLock), io::Error> {
     let mut client_config = quinn::ClientConfig::new(tls_config.clone());
     client_config.transport_config(transport_config.clone());
 
@@ -171,9 +165,7 @@ async fn try_connect_quad1(
         Err(result) => Connection::new(result.await?),
     };
 
-    let (driver, send_request) = h3::client::new(quic)
-        .await
-        .map_err(io::Error::other)?;
+    let (driver, send_request) = h3::client::new(quic).await.map_err(io::Error::other)?;
 
     let send_request = Arc::new(Mutex::new(send_request));
 
@@ -187,19 +179,11 @@ async fn try_connect_quad1(
 async fn connect_quad1(
     tls_config: &Arc<QuicClientConfig>,
     transport_config: &Arc<TransportConfig>,
-) -> (
-    oneshot::Receiver<()>,
-    SendRequestLock,
-) {
+) -> (oneshot::Receiver<()>, SendRequestLock) {
     let mut backoff = Duration::from_millis(500);
     loop {
-        let result: Result<
-            (
-                oneshot::Receiver<()>,
-                SendRequestLock,
-            ),
-            io::Error,
-        > = try_connect_quad1(tls_config, transport_config).await;
+        let result: Result<(oneshot::Receiver<()>, SendRequestLock), io::Error> =
+            try_connect_quad1(tls_config, transport_config).await;
 
         match result {
             Ok((is_dead_rx, send_request)) => {
